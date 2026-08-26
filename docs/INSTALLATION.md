@@ -2,6 +2,11 @@
 
 ## Requisiti e installazione
 
+Questa distribuzione è privata. Accedi a GitHub con l'account invitato e accetta
+l'invito del proprietario. Un errore 404 può indicare che non sei autenticato o
+autorizzato, anche se il link è corretto. APK e aggiornamenti seguono gli stessi
+permessi della repository: non esiste un link anonimo pubblico.
+
 Android 7 / API 24 o superiore, spazio libero, server compatibile e account valido.
 Usare HTTPS con certificato valido; omettere il protocollo abilita HTTPS, non HTTP.
 Scaricare l'APK dalle [Releases ufficiali](https://github.com/GioMocchi03/music-bank/releases).

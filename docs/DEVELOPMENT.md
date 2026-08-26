@@ -55,7 +55,11 @@ nativi/Android Auto e richiede CORS corretto sul server.
 
 - CI push/PR: versioni, TypeScript, test ed export multipiattaforma.
 - Build Android manuale in Actions: release non firmata, senza chiavi private.
-- CodeQL: analisi JavaScript/TypeScript e workflow.
+- Gitleaks: controllo automatico della cronologia per individuare segreti.
+- CodeQL: workflow predisposto ma disabilitato per impostazione predefinita. La
+  repository privata personale non dispone automaticamente di GitHub Code Security;
+  non attivarlo senza verificare idoneità e licenza. Nessun piano a pagamento viene
+  attivato da questi workflow.
 - Dependabot: aggiornamenti da rivedere, senza auto-merge. Expo/React Native devono
   essere aggiornati in modo coordinato.
 

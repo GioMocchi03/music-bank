@@ -5,10 +5,11 @@ rami distinti per ogni release precedente.
 
 ## Segnalazione riservata
 
-Per esposizione di credenziali, dati o esecuzione di codice usa
-**[Security → Report a vulnerability](https://github.com/GioMocchi03/music-bank/security/advisories/new)**.
-Non aprire issue pubbliche con dettagli sfruttabili. Se la segnalazione privata non
-è disponibile, chiedi un canale riservato in un'issue senza dettagli sensibili.
+Per esposizione di credenziali, dati o esecuzione di codice contatta il proprietario
+**GioMocchi03** attraverso il canale privato concordato al momento dell'invito.
+Se non ne hai uno, chiedi un contatto riservato in un'issue senza dettagli sensibili.
+Anche un'issue nella repository privata può essere letta dagli altri collaboratori.
+La segnalazione privata GitHub non è presupposta disponibile per questo account.
 Non sono promessi SLA o premi.
 
 Indica versione, piattaforma, impatto e riproduzione con dati fittizi. Non allegare

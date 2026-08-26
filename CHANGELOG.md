@@ -1,6 +1,6 @@
 # Changelog
 
-Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
+Release riservate agli account autorizzati: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
 ## 1.3.7 — 2026-08-26 · build 21

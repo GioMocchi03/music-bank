@@ -4,6 +4,10 @@ Gli APK ufficiali sono firmati **localmente** e allegati a GitHub Releases. La C
 non contiene chiavi private e non pubblica automaticamente file destinati agli utenti.
 Il suo artefatto Android è esplicitamente non firmato.
 
+La repository e le release sono **private**. Pubblicare una bozza di release non
+cambia la visibilità della repository: scaricano gli allegati solo gli account
+autorizzati. Non pubblicare mirror o collegamenti anonimi senza consenso del proprietario.
+
 ## 1. Preparare il sorgente
 
 Aggiornare `package.json`, le due versioni root in `package-lock.json`, `app.json`,
@@ -53,7 +57,8 @@ Il checksum identifica il binario pubblicato, non promette build identiche bit p
 
 ## 4. Tag e release
 
-Commettere e inviare il sorgente su `main`; attendere CI verde e rivedere CodeQL.
+Commettere e inviare il sorgente su `main`; attendere CI e Gitleaks verdi. Rivedere
+anche CodeQL se è stato abilitato su una repository con licenza idonea.
 Controllare che il commit corrisponda esattamente al sorgente usato per l'APK.
 Non spostare tag già pubblicati e non sostituire silenziosamente un APK esistente.
 

@@ -7,7 +7,8 @@ preferiti, playlist e scrobbling. Il server può registrare account, IP e richie
 URL audio/immagini possono contenere token; immagini restituite dal server possono
 essere su domini di terzi. La ricerca web apre Google con artista/titolo e le radio
 aprono gli URL configurati tramite il sistema. Non è configurato un servizio analytics
-proprietario. Repository, download e badge coinvolgono GitHub e i servizi dei badge.
+proprietario. Repository e download coinvolgono GitHub; non sono usati badge esterni
+che interrogano i dati della repository privata.
 
 | Dati | Conservazione |
 | --- | --- |

@@ -10,10 +10,7 @@
     <a href="https://github.com/GioMocchi03/music-bank/issues">Segnala un problema</a>
   </p>
   <p>
-    <a href="https://github.com/GioMocchi03/music-bank/actions/workflows/ci.yml"><img src="https://github.com/GioMocchi03/music-bank/actions/workflows/ci.yml/badge.svg" alt="Controlli CI" /></a>
-    <a href="https://github.com/GioMocchi03/music-bank/releases"><img src="https://img.shields.io/github/v/release/GioMocchi03/music-bank" alt="Ultima release" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="Licenza MIT" /></a>
-    <img src="https://img.shields.io/badge/Android-7%2B-CCFF33" alt="Android 7 o superiore" />
+    Android 7+ · <a href="LICENSE">MIT</a> · Distribuzione privata
   </p>
 </div>
 
@@ -30,6 +27,10 @@ Expo, React Native and TypeScript. Android APKs are available through
 The main documentation is currently in Italian.
 
 ## Scarica e aggiorna
+
+**Repository privata:** devi accedere a GitHub con un account autorizzato dal
+proprietario. Anche le Releases e gli APK sono riservati; il solo link non dà accesso.
+Per inviti e permessi vedi [gestione accessi](docs/ACCESS.md).
 
 1. Apri **[l'ultima release](https://github.com/GioMocchi03/music-bank/releases/latest)**.
 2. In **Assets**, scarica `MusicBank-<versione>-build<numero>.apk`.
