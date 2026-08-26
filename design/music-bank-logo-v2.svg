@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Music Bank — cassaforte e vinile</title>
+  <desc id="description">Logo vettoriale di una cassaforte con un disco in vinile e una puntina sulla porta.</desc>
+
+  <defs>
+    <style>
+      .lime-fill { fill: #d6ff00; }
+      .lime-stroke { fill: none; stroke: #d6ff00; stroke-linecap: round; stroke-linejoin: round; }
+      .dark-fill { fill: #0b0b10; }
+      .dark-stroke { fill: none; stroke: #0b0b10; stroke-linecap: round; stroke-linejoin: round; }
+      .cream-fill { fill: #fff9e8; }
+    </style>
+  </defs>
+
+  <!-- Sfondo dell'icona: può essere nascosto per esportare il solo simbolo. -->
+  <g id="background">
+    <rect class="dark-fill" x="0" y="0" width="1024" height="1024" rx="150"/>
+  </g>
+
+  <!-- Corpo esterno della cassaforte. -->
+  <g id="safe-body">
+    <rect class="lime-stroke" x="142" y="138" width="740" height="746" rx="112" stroke-width="46"/>
+    <rect class="lime-stroke" x="220" y="216" width="584" height="590" rx="72" stroke-width="20"/>
+    <rect class="lime-fill" x="260" y="860" width="82" height="42" rx="14"/>
+    <rect class="lime-fill" x="682" y="860" width="82" height="42" rx="14"/>
+  </g>
+
+  <!-- Cerniere della porta. -->
+  <g id="hinges">
+    <rect class="lime-fill" x="194" y="318" width="62" height="82" rx="12"/>
+    <rect class="lime-fill" x="194" y="624" width="62" height="82" rx="12"/>
+  </g>
+
+  <!-- Disco in vinile al posto della maniglia tradizionale. -->
+  <g id="vinyl">
+    <circle class="lime-fill" cx="510" cy="520" r="192"/>
+    <circle class="dark-fill" cx="510" cy="520" r="67"/>
+    <circle class="cream-fill" cx="510" cy="520" r="43"/>
+    <circle class="dark-fill" cx="510" cy="520" r="10"/>
+
+    <g id="vinyl-grooves" class="dark-stroke" stroke-width="9">
+      <path d="M390 397 A168 168 0 0 1 468 354"/>
+      <path d="M365 438 A158 158 0 0 1 455 372"/>
+      <path d="M350 485 A165 165 0 0 1 447 393"/>
+      <path d="M633 596 A164 164 0 0 1 556 674"/>
+      <path d="M650 564 A157 157 0 0 1 570 651"/>
+      <path d="M664 529 A167 167 0 0 1 584 632"/>
+    </g>
+  </g>
+
+  <!-- Braccio e puntina del giradischi. -->
+  <g id="tonearm">
+    <circle class="lime-fill" cx="710" cy="354" r="45"/>
+    <circle class="dark-fill" cx="710" cy="354" r="20"/>
+    <path class="lime-stroke" d="M710 354 V502 L646 579" stroke-width="30"/>
+    <g id="stylus" transform="rotate(40 638 588)">
+      <rect class="lime-fill" x="611" y="548" width="54" height="80" rx="12"/>
+      <path class="lime-fill" d="M629 626 H647 L638 653 Z"/>
+    </g>
+  </g>
+</svg>

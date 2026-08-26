@@ -1,0 +1,63 @@
+{
+  "name": "gio-music",
+  "version": "1.3.7",
+  "description": "Client musicale per Navidrome e Subsonic con libreria sincronizzata, download offline e integrazione Android Auto.",
+  "license": "MIT",
+  "author": "GioMocchi03",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GioMocchi03/music-bank.git"
+  },
+  "bugs": { "url": "https://github.com/GioMocchi03/music-bank/issues" },
+  "homepage": "https://github.com/GioMocchi03/music-bank#readme",
+  "engines": { "node": ">=24 <25" },
+  "main": "index.ts",
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo-asset": "~57.0.8",
+    "expo": "~57.0.9",
+    "expo-audio": "~57.0.3",
+    "expo-blur": "~57.0.2",
+    "expo-crypto": "~57.0.1",
+    "expo-file-system": "~57.0.1",
+    "expo-font": "~57.0.1",
+    "expo-linear-gradient": "~57.0.1",
+    "expo-secure-store": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.2",
+    "js-md5": "^0.9.2",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "doctor": "npx expo-doctor",
+    "check:version": "node tools/check-version.mjs",
+    "check:docs": "node tools/check-doc-links.mjs",
+    "export:check": "expo export --platform all --output-dir .codex-export-check",
+    "build:android": "node tools/build-android.mjs",
+    "check": "npm run check:version && npm run check:docs && npm run typecheck && npm test"
+  },
+  "expo": {
+    "doctor": {
+      "appConfigFieldsNotSyncedCheck": {
+        "enabled": false
+      }
+    }
+  },
+  "private": true
+}

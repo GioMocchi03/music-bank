@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Installazione e problemi comuni
+    url: https://github.com/GioMocchi03/music-bank/blob/main/docs/INSTALLATION.md
+    about: Consulta la guida prima di aprire una segnalazione.
+  - name: Vulnerabilità di sicurezza
+    url: https://github.com/GioMocchi03/music-bank/security/advisories/new
+    about: Segnalazione riservata, senza pubblicare dettagli in una issue.

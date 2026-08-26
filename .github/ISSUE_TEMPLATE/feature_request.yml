@@ -1,0 +1,21 @@
+name: Proponi una funzione
+description: Descrivi un'esigenza e come vorresti risolverla.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Quale problema vuoi risolvere?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposta e alternative considerate
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Piattaforma
+      options: [Android, Android Auto, Web, iOS, Tutte]

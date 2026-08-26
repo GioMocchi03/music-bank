@@ -1,0 +1,44 @@
+name: Segnala un problema
+description: Un comportamento inatteso dell'app.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Non allegare password, token, URL autenticati o file di storage. Per vulnerabilità usa SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Versione e build
+      placeholder: 1.3.7 (21)
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Dispositivo e sistema operativo
+      placeholder: Modello telefono, Android oppure browser/versione
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Software e versione del server
+      description: Non indicare indirizzo privato o credenziali.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Come riprodurre il problema
+      description: Passaggi, risultato atteso e risultato effettivo.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot o log oscurati
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Prima di inviare
+      options:
+        - label: Ho rimosso credenziali, token e informazioni personali.
+          required: true
