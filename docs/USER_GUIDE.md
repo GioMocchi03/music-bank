@@ -35,17 +35,17 @@ una descrizione, renderla personale/condivisa, cambiare l'ordine dei brani, rimu
 o eliminare definitivamente la playlist. Le playlist della sezione server restano
 in sola lettura.
 
-## Aggiornamenti privati
+## Aggiornamenti GitHub
 
-In **Impostazioni → Aggiornamenti privati** puoi controllare le release senza rendere
-pubblica la repository. Serve un token GitHub fine-grained del proprio account,
-limitato alla repository `music-bank` con il solo permesso **Contents: read**. Su
+In **Impostazioni → Aggiornamenti privati** la versione 1.3.8 può controllare le release
+tramite un token GitHub fine-grained limitato a `music-bank`, con il solo permesso
+**Contents: read**. Questa configurazione risale alla distribuzione privata. Su
 Android il token viene conservato in SecureStore; non viene inserito nell'APK, nei
 link o nei log. Puoi rimuoverlo dalla stessa schermata.
 
 Quando è disponibile una versione più recente, l'app mostra la release e apre il
-download nel browser. GitHub richiede comunque l'accesso di un account autorizzato.
-Sul web il token non viene memorizzato.
+download nel browser. La pagina Release e l'APK sono ora pubblici e non richiedono
+autenticazione. Sul web il token non viene memorizzato.
 
 ## Offline
 

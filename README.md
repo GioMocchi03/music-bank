@@ -10,9 +10,22 @@
     <a href="https://github.com/GioMocchi03/music-bank/issues">Segnala un problema</a>
   </p>
   <p>
-    Android 7+ · <a href="LICENSE">MIT</a> · Distribuzione privata
+    <a href="https://github.com/GioMocchi03/music-bank/releases/latest"><img src="https://img.shields.io/github/v/release/GioMocchi03/music-bank?style=for-the-badge&color=c8ff38&labelColor=15121f" alt="Ultima release" /></a>
+    <img src="https://img.shields.io/badge/Android-7%2B-c8ff38?style=for-the-badge&labelColor=15121f" alt="Android 7 o superiore" />
+    <img src="https://img.shields.io/badge/Expo-57-7657ff?style=for-the-badge&labelColor=15121f" alt="Expo 57" />
+    <a href="LICENSE"><img src="https://img.shields.io/badge/licenza-MIT-7657ff?style=for-the-badge&labelColor=15121f" alt="Licenza MIT" /></a>
   </p>
 </div>
+
+## Anteprima
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="Home di Music Bank con contenuti consigliati e generi" width="31%" />
+  <img src="docs/screenshots/playlist-detail.png" alt="Dettaglio playlist con gestione e download offline" width="31%" />
+  <img src="docs/screenshots/player.png" alt="Player di Music Bank con qualità audio e controlli" width="31%" />
+</p>
+
+<p align="center"><sub>Home personalizzata · Playlist e ascolto offline · Player completo</sub></p>
 
 ## Cos'è
 
@@ -28,9 +41,8 @@ The main documentation is currently in Italian.
 
 ## Scarica e aggiorna
 
-**Repository privata:** devi accedere a GitHub con un account autorizzato dal
-proprietario. Anche le Releases e gli APK sono riservati; il solo link non dà accesso.
-Per inviti e permessi vedi [gestione accessi](docs/ACCESS.md).
+La repository e le release sono pubbliche: non serve un account GitHub per scaricare
+l'APK. Scarica sempre gli aggiornamenti dalla release ufficiale e verifica il checksum.
 
 1. Apri **[l'ultima release](https://github.com/GioMocchi03/music-bank/releases/latest)**.
 2. In **Assets**, scarica `MusicBank-<versione>-build<numero>.apk`.
@@ -40,7 +52,9 @@ Per inviti e permessi vedi [gestione accessi](docs/ACCESS.md).
 
 Gli archivi **Source code** sono sorgenti, non l'app da installare. Ogni release include
 note e checksum SHA-256. Per le notifiche: **Watch → Custom → Releases** su GitHub.
-Gli aggiornamenti sono manuali: non c'è un updater automatico nell'app.
+L'app può controllare la release più recente e aprire la pagina di download; per questa
+versione il controllo API mantiene il token GitHub opzionale introdotto quando la
+repository era privata. L'installazione dell'APK resta una conferma manuale Android.
 Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 
 ## Funzioni

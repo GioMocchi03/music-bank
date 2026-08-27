@@ -2,10 +2,9 @@
 
 ## Requisiti e installazione
 
-Questa distribuzione è privata. Accedi a GitHub con l'account invitato e accetta
-l'invito del proprietario. Un errore 404 può indicare che non sei autenticato o
-autorizzato, anche se il link è corretto. APK e aggiornamenti seguono gli stessi
-permessi della repository: non esiste un link anonimo pubblico.
+Questa distribuzione è pubblica: repository, release e APK sono consultabili senza
+un account GitHub. Scaricare soltanto dalle release ufficiali e verificare checksum
+e certificato prima dell'installazione.
 
 Android 7 / API 24 o superiore, spazio libero, server compatibile e account valido.
 Usare HTTPS con certificato valido; omettere il protocollo abilita HTTPS, non HTTP.
@@ -21,9 +20,9 @@ e il numero di build deve aumentare. Non disinstallare per risolvere un errore s
 considerare la perdita di dati locali e download. Un APK di sviluppo o firmato da
 terzi non può aggiornare direttamente la release ufficiale.
 
-Notifiche GitHub: **Watch → Custom → Releases**. Dalla 1.3.8 l'app può controllare
-la release privata con un token fine-grained `Contents: read` salvato nel SecureStore;
-il download si apre nel browser autenticato. Non sono abilitati aggiornamenti
+Notifiche GitHub: **Watch → Custom → Releases**. La 1.3.8 conserva il controllo API
+tramite token fine-grained `Contents: read` salvato nel SecureStore, introdotto quando
+la repository era privata; la pagina di download è ora pubblica. Non sono abilitati aggiornamenti
 JavaScript OTA. I download locali non sono un backup.
 
 ## Verifica del file

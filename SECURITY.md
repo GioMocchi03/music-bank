@@ -6,10 +6,9 @@ rami distinti per ogni release precedente.
 ## Segnalazione riservata
 
 Per esposizione di credenziali, dati o esecuzione di codice contatta il proprietario
-**GioMocchi03** attraverso il canale privato concordato al momento dell'invito.
-Se non ne hai uno, chiedi un contatto riservato in un'issue senza dettagli sensibili.
-Anche un'issue nella repository privata può essere letta dagli altri collaboratori.
-La segnalazione privata GitHub non è presupposta disponibile per questo account.
+**GioMocchi03** attraverso un canale privato concordato. Se non ne hai uno, chiedi
+un contatto riservato in un'issue senza dettagli sensibili. Le issue sono pubbliche:
+non usarle per vulnerabilità, credenziali, URL autenticati o dati personali.
 Non sono promessi SLA o premi.
 
 Indica versione, piattaforma, impatto e riproduzione con dati fittizi. Non allegare

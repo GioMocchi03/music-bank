@@ -1,44 +1,33 @@
-# Accesso riservato
+# Accesso e distribuzione
 
-La repository `GioMocchi03/music-bank` è privata. Sorgenti, issue, log dei workflow
-e release APK sono accessibili agli account autorizzati. La creazione iniziale
-non invita nessun collaboratore: decide il proprietario chi aggiungere.
-
-## Invitare una persona
-
-Il proprietario apre **Settings → Collaborators → Add people**, cerca il nome utente
-GitHub e invia l'invito. Verificare attentamente l'account prima di inviare. La persona
-deve accettare e accedere a GitHub per vedere repository e Releases. Un URL non è un
-invito e non rende pubblico l'APK.
-
-**Attenzione ai permessi:** nelle repository di un account personale i collaboratori
-hanno lettura e scrittura, non un ruolo di sola lettura. Per distribuire APK a tester
-che non devono modificare sorgenti/release, valutare una repository privata di
-un'organizzazione con ruolo Read. Non trasferire o invitare utenti senza una scelta
-esplicita del proprietario.
-
-Rimuovere un collaboratore blocca gli accessi futuri, ma non elimina copie del codice
-o APK già scaricati. La visibilità privata non sostituisce le condizioni della licenza
-MIT presente nel progetto né impedisce tecnicamente la copia di un file.
+La repository `GioMocchi03/music-bank` è pubblica. Codice, documentazione, workflow
+e release APK possono essere consultati senza un account GitHub.
 
 ## Download
 
-Usare la pagina Releases dopo il login. Dal terminale autenticato:
+Aprire la pagina [Releases](https://github.com/GioMocchi03/music-bank/releases),
+scegliere l'ultima versione e scaricare dagli **Assets** il file `.apk` insieme al
+relativo `.apk.sha256`. Gli archivi automatici **Source code** non sono APK.
+
+Dal terminale:
 
 ```bash
 gh release download --repo GioMocchi03/music-bank --pattern '*.apk' --pattern '*.sha256'
 ```
 
 Non incorporare token GitHub nell'app, negli URL condivisi o nei file di configurazione.
-Niente GitHub Pages o mirror pubblici vengono attivati per questa distribuzione.
+
+## Collaborazione
+
+La visibilità pubblica consente lettura e fork, ma non concede il permesso di scrivere
+direttamente sul repository. Modifiche esterne arrivano tramite pull request e restano
+soggette a revisione. I collaboratori con accesso diretto devono essere aggiunti soltanto
+dal proprietario e con i permessi minimi necessari.
 
 ## Controlli e costi
 
-CI e Gitleaks usano GitHub Actions; le repository private consumano la quota disponibile
-del proprio account. Non vengono acquistati piani o incrementati limiti di spesa.
-La compilazione Android in Actions è manuale; CodeQL è disabilitato per default
-e richiede idoneità/licenza prima dell'attivazione. Dependabot propone cambiamenti
-senza unirli automaticamente.
+CI, Gitleaks e Dependabot controllano il progetto senza unione automatica delle modifiche.
+La compilazione Android in Actions resta manuale e non contiene le chiavi di firma.
 
-Fonti: [permessi nelle repository personali](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/permission-levels-for-a-personal-account-repository),
-[disponibilità di Code Scanning](https://docs.github.com/en/code-security/concepts/code-scanning/code-scanning).
+Fonti: [permessi di accesso GitHub](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/permission-levels-for-a-personal-account-repository),
+[visibilità delle repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility).
