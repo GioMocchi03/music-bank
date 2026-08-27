@@ -37,15 +37,13 @@ in sola lettura.
 
 ## Aggiornamenti GitHub
 
-In **Impostazioni → Aggiornamenti privati** la versione 1.3.8 può controllare le release
-tramite un token GitHub fine-grained limitato a `music-bank`, con il solo permesso
-**Contents: read**. Questa configurazione risale alla distribuzione privata. Su
-Android il token viene conservato in SecureStore; non viene inserito nell'APK, nei
-link o nei log. Puoi rimuoverlo dalla stessa schermata.
+In **Impostazioni → Aggiornamenti** la versione 1.3.9 controlla la release pubblica
+senza account o token GitHub. Eventuali token salvati dalle versioni precedenti vengono
+rimossi dal dispositivo.
 
 Quando è disponibile una versione più recente, l'app mostra la release e apre il
-download nel browser. La pagina Release e l'APK sono ora pubblici e non richiedono
-autenticazione. Sul web il token non viene memorizzato.
+download nel browser. La pagina Release e l'APK sono pubblici e non richiedono
+autenticazione; Android chiede comunque conferma prima dell'installazione.
 
 ## Offline
 
@@ -78,5 +76,5 @@ non viene inviato al nuovo server per preferiti, playlist o streaming con lo ste
 
 È incluso un servizio Media3 con catalogo dedicato. Sincronizza prima del collegamento.
 Non presumere che i download dell'app siano disponibili anche nel servizio Auto:
-questa integrazione offline richiede un lavoro separato. La 1.3.8 non è ancora
+questa integrazione offline richiede un lavoro separato. La 1.3.9 non è ancora
 stata collaudata su auto reali durante questo rilascio.

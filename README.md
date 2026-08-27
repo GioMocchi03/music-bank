@@ -77,8 +77,9 @@ Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 | Web | Interfaccia per sviluppo/verifica; niente download nativi o Android Auto. Il server deve consentire CORS. |
 | iOS | Sorgenti condivisi ed export JavaScript verificati; nessuna IPA o pubblicazione App Store. Serve un build iOS dedicato. |
 
-La **1.3.8 (22)** include gestione completa delle playlist personali e controllo
-autenticato delle release private. Vedi [verifiche e limiti](docs/releases/1.3.8.md).
+La **1.3.9 (23)** distingue le playlist create nell'app dalle raccolte del server,
+filtra le cartelle che duplicano album e controlla gli aggiornamenti pubblici senza token.
+Vedi [verifiche e limiti](docs/releases/1.3.9.md).
 
 ## Primo accesso
 

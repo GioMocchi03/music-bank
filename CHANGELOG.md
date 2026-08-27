@@ -1,7 +1,20 @@
 # Changelog
 
-Release riservate agli account autorizzati: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
+Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
+
+## 1.3.9 — 2026-08-27 · build 23
+
+### Corretto
+
+- “Le mie playlist” contiene soltanto playlist create dall'app per lo specifico server/account.
+- Le raccolte del server che duplicano un album completo vengono escluse dalle playlist.
+- Playlist server e cartelle album non sono più modificabili in base al solo campo `owner`.
+
+### Migliorato
+
+- Il controllo aggiornamenti usa la release pubblica senza richiedere account o token GitHub.
+- Gli ID delle playlist create dall'app vengono conservati localmente senza password.
 
 ## 1.3.8 — 2026-08-27 · build 22
 

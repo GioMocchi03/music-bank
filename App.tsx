@@ -44,6 +44,7 @@ import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
+import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
   OfflineTrack,
   clearOfflineTracks,
@@ -80,11 +81,10 @@ import {
   compareVersions,
   fetchLatestPrivateRelease,
   GithubRelease,
-  loadGithubReleaseToken,
   PRIVATE_RELEASES_URL,
-  saveGithubReleaseToken,
 } from './src/updates/githubUpdates';
 import {
+  isAlbumFolderPlaylist,
   isPlaylistOwnedBy,
   movePlaylistItem,
   normalizePlaylistName,
@@ -151,6 +151,32 @@ function coverUrlForSize(uri: string | undefined, size: number): string | undefi
     return uri;
   }
 }
+
+async function loadActualPlaylists(
+  client: NavidromeClient,
+  albums: Album[],
+  signal?: AbortSignal,
+): Promise<Playlist[]> {
+  const summaries = await client.getPlaylists(signal);
+  const visible: Playlist[] = [];
+  const batchSize = 6;
+  for (let offset = 0; offset < summaries.length; offset += batchSize) {
+    const batch = summaries.slice(offset, offset + batchSize);
+    const classified = await Promise.all(batch.map(async (playlist) => {
+      if (isAlbumFolderPlaylist(playlist, albums)) return null;
+      try {
+        const entries = await client.getPlaylistEntries(playlist.id, signal);
+        return isAlbumFolderPlaylist(playlist, albums, entries) ? null : playlist;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return playlist;
+      }
+    }));
+    visible.push(...classified.filter((playlist): playlist is Playlist => !!playlist));
+  }
+  return visible;
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -181,6 +207,7 @@ function MusicBankApp() {
   const [artists, setArtists] = useState<Artist[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [personalPlaylistIds, setPersonalPlaylistIds] = useState<Set<string>>(new Set());
   const [songs, setSongs] = useState<Song[]>([]);
   const [radios, setRadios] = useState<InternetRadioStation[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -311,6 +338,9 @@ function MusicBankApp() {
     const previewPromise = loadLibraryPreview();
     const historyPromise = loadHistory();
     const offlinePromise = connectionPromise.then((saved) => loadOfflineTracks(saved ? connectionSourceKey(saved) : 'legacy'));
+    const personalPlaylistsPromise = connectionPromise.then((saved) => (
+      saved ? loadPersonalPlaylistIds(connectionSourceKey(saved)) : new Set<string>()
+    ));
     const preferencesPromise = loadPreferences();
 
     void historyPromise.then((savedHistory) => {
@@ -325,6 +355,11 @@ function MusicBankApp() {
       }
     }).catch(() => {
       // Un indice download danneggiato non deve ritardare il primo rendering.
+    });
+    void personalPlaylistsPromise.then((ids) => {
+      if (active) setPersonalPlaylistIds(ids);
+    }).catch(() => {
+      if (active) setPersonalPlaylistIds(new Set());
     });
     void preferencesPromise.then((savedPreferences) => {
       if (!active) return;
@@ -363,7 +398,9 @@ function MusicBankApp() {
         setAlbums(preview.albums);
         setArtists(preview.artists);
         setGenres(preview.genres);
-        setPlaylists(preview.playlists);
+        setPlaylists(preview.playlists.filter((playlist) => (
+          !isAlbumFolderPlaylist(playlist, preview.albums)
+        )));
         setRadios(preview.radios);
         setMessage(
           `${preview.albums.length} album dalla cache · caricamento tracce in background…`,
@@ -531,6 +568,7 @@ function MusicBankApp() {
       setArtists([]);
       setGenres([]);
       setPlaylists([]);
+      setPersonalPlaylistIds(new Set());
       setSongs([]);
       setRadios([]);
       setHistory([]);
@@ -576,7 +614,9 @@ function MusicBankApp() {
         await client.ping(abortController.signal);
         serverVerified = true;
         setAuthenticatedUsername(nextConnection.username.trim());
-        setActiveSourceKey(connectionSourceKey(nextConnection));
+        const nextSourceKey = connectionSourceKey(nextConnection);
+        setActiveSourceKey(nextSourceKey);
+        setPersonalPlaylistIds(await loadPersonalPlaylistIds(nextSourceKey));
         clientRef.current = client;
         setConnection(nextConnection);
         setConnected(true);
@@ -606,7 +646,7 @@ function MusicBankApp() {
         const [allArtists, allGenres, allPlaylists] = await Promise.all([
           client.getArtists(abortController.signal),
           client.getGenres(abortController.signal),
-          client.getPlaylists(abortController.signal),
+          loadActualPlaylists(client, allAlbums, abortController.signal),
         ]);
         setMessage('Sincronizzazione catalogo brani e radio…');
         const [allSongs, allRadios] = await Promise.all([
@@ -1140,7 +1180,7 @@ function MusicBankApp() {
               onAlbum={(album) => setDetail({ type: 'album', id: album.id })}
               onArtist={(artist) => setDetail({ type: 'artist', id: artist.id })}
               onPlaySongs={(songs, index = 0) => void loadSong(songs, index)}
-              playlistEditable={!!detailPlaylist && isPlaylistOwnedBy(detailPlaylist, authenticatedUsername)}
+              playlistEditable={!!detailPlaylist && isPlaylistOwnedBy(detailPlaylist, authenticatedUsername, personalPlaylistIds)}
               onManagePlaylist={() => setManagePlaylistOpen(true)}
               onMoreSong={(song) => {
                 setActionSong(song);
@@ -1242,6 +1282,7 @@ function MusicBankApp() {
                   genres={genres}
                   playlists={playlists}
                   username={authenticatedUsername}
+                  personalPlaylistIds={personalPlaylistIds}
                   connected={connected}
                   songs={songs}
                   radios={radios}
@@ -1427,6 +1468,7 @@ function MusicBankApp() {
         visible={playlistPickerOpen}
         playlists={playlists}
         username={authenticatedUsername}
+        personalPlaylistIds={personalPlaylistIds}
         onClose={() => setPlaylistPickerOpen(false)}
         onPick={async (playlist) => {
           if (!actionTarget) return;
@@ -1452,11 +1494,13 @@ function MusicBankApp() {
           if (!client || !connected) throw new Error('Collega il server prima di creare una playlist.');
           const name = normalizePlaylistName(rawName);
           const created = await client.createPlaylist(name);
+          if (!created) throw new Error('Il server ha creato la playlist senza restituirne l’identificativo.');
+          const nextPersonalIds = await rememberPersonalPlaylist(activeSourceKey, created.id);
+          setPersonalPlaylistIds(nextPersonalIds);
           let updatedPlaylists: Playlist[];
           try {
-            updatedPlaylists = await client.getPlaylists();
+            updatedPlaylists = await loadActualPlaylists(client, albums);
           } catch (error) {
-            if (!created) throw error;
             updatedPlaylists = [created, ...playlists.filter((playlist) => playlist.id !== created.id)];
           }
           setPlaylists(updatedPlaylists);
@@ -1479,14 +1523,14 @@ function MusicBankApp() {
         onSave={async ({ name, comment, public: isPublic, songs: orderedSongs }) => {
           const client = clientRef.current;
           const playlist = detailPlaylist;
-          if (!client || !playlist || !isPlaylistOwnedBy(playlist, authenticatedUsername)) {
+          if (!client || !playlist || !isPlaylistOwnedBy(playlist, authenticatedUsername, personalPlaylistIds)) {
             throw new Error('Questa playlist non è modificabile dall’account collegato.');
           }
           await client.updatePlaylistMetadata(playlist.id, { name, comment, public: isPublic });
           await client.replacePlaylistSongs(playlist.id, orderedSongs.map((song) => song.id));
           const [updatedDetail, updatedPlaylists] = await Promise.all([
             client.getPlaylist(playlist.id),
-            client.getPlaylists(),
+            loadActualPlaylists(client, albums),
           ]);
           setDetailPlaylist(updatedDetail);
           setPlaylists(updatedPlaylists);
@@ -1496,11 +1540,15 @@ function MusicBankApp() {
         onDelete={async () => {
           const client = clientRef.current;
           const playlist = detailPlaylist;
-          if (!client || !playlist || !isPlaylistOwnedBy(playlist, authenticatedUsername)) {
+          if (!client || !playlist || !isPlaylistOwnedBy(playlist, authenticatedUsername, personalPlaylistIds)) {
             throw new Error('Questa playlist non è eliminabile dall’account collegato.');
           }
           await client.deletePlaylist(playlist.id);
-          const updatedPlaylists = await client.getPlaylists();
+          const [updatedPlaylists, nextPersonalIds] = await Promise.all([
+            loadActualPlaylists(client, albums),
+            forgetPersonalPlaylist(activeSourceKey, playlist.id),
+          ]);
+          setPersonalPlaylistIds(nextPersonalIds);
           setPlaylists(updatedPlaylists);
           setDetailPlaylist(null);
           setDetail(null);
@@ -1821,6 +1869,7 @@ function LibraryScreen({
   genres,
   playlists,
   username,
+  personalPlaylistIds,
   connected,
   songs,
   radios,
@@ -1842,6 +1891,7 @@ function LibraryScreen({
   genres: Genre[];
   playlists: Playlist[];
   username: string;
+  personalPlaylistIds: ReadonlySet<string>;
   connected: boolean;
   songs: Song[];
   radios: InternetRadioStation[];
@@ -1884,8 +1934,8 @@ function LibraryScreen({
     return rankSearchItems(entries, genreQuery, genres.length);
   }, [genreQuery, genres]);
   const playlistGroups = useMemo(
-    () => partitionPlaylists(playlists, username),
-    [playlists, username],
+    () => partitionPlaylists(playlists, username, personalPlaylistIds),
+    [personalPlaylistIds, playlists, username],
   );
   const tiles: Array<[LibraryMode, IconName, string, string]> = [
     ['albums', 'album', 'Album', `${albums.length}`],
@@ -2656,7 +2706,7 @@ function SettingsScreen({
       rows: [
         ['server', 'server-network', 'Media provider Navidrome', connected ? 'Connesso' : 'Da collegare'],
         ['sync', 'sync', 'Sync manager', `${songCount} brani indicizzati`],
-        ['updates', 'update', 'Aggiornamenti privati', `Versione installata ${APP_VERSION}`],
+        ['updates', 'update', 'Aggiornamenti', `Versione installata ${APP_VERSION}`],
       ],
     },
     {
@@ -2688,18 +2738,16 @@ function SettingsScreen({
 }
 
 function UpdateSettings() {
-  const [token, setToken] = useState('');
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState('');
   const [release, setRelease] = useState<GithubRelease | null>(null);
 
-  const check = useCallback(async (candidate: string) => {
+  const check = useCallback(async () => {
     setChecking(true);
-    setStatus('Controllo della release privata…');
+    setStatus('Controllo dell’ultima release pubblica…');
     setRelease(null);
     try {
-      if (Platform.OS !== 'web') await saveGithubReleaseToken(candidate);
-      const latest = await fetchLatestPrivateRelease(candidate);
+      const latest = await fetchLatestPrivateRelease();
       setRelease(latest);
       const comparison = compareVersions(latest.version, APP_VERSION);
       setStatus(comparison > 0
@@ -2716,11 +2764,8 @@ function UpdateSettings() {
 
   useEffect(() => {
     let active = true;
-    void loadGithubReleaseToken().then((savedToken) => {
-      if (!active) return;
-      setToken(savedToken);
-      if (savedToken) void check(savedToken);
-    });
+    void clearGithubReleaseToken().catch(() => {});
+    if (active) void check();
     return () => { active = false; };
   }, [check]);
 
@@ -2728,27 +2773,18 @@ function UpdateSettings() {
     <View style={styles.settingsActionGroup}>
       <SettingsActionRow icon="cellphone-check" title="Versione installata" subtitle={`Music Bank ${APP_VERSION} · build ${APP_BUILD}`} value="Installata" onPress={() => {}} />
       <View style={styles.updateCard}>
-        <Text style={styles.settingsRowTitle}>Accesso alla release privata</Text>
-        <Text style={styles.updateHelp}>Usa un token personale fine-grained limitato a questa repository con il solo permesso Contents: read. Il token resta nel SecureStore del dispositivo e non viene inserito nei link o nei log.</Text>
-        <Field label="Token GitHub" icon="github" value={token} secure onChange={setToken} />
-        <Pressable disabled={checking || !token.trim()} style={[styles.syncButton, (checking || !token.trim()) && styles.buttonDisabled]} onPress={() => void check(token)}>
+        <Text style={styles.settingsRowTitle}>Aggiornamenti pubblici GitHub</Text>
+        <Text style={styles.updateHelp}>Controlla la release ufficiale senza account o token. L’installazione dell’APK richiede sempre la conferma di Android.</Text>
+        <Pressable disabled={checking} style={[styles.syncButton, checking && styles.buttonDisabled]} onPress={() => void check()}>
           {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
-          <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Salva e controlla'}</Text>
+          <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Controlla aggiornamenti'}</Text>
         </Pressable>
         {!!status && <Text style={styles.statusText}>{status}</Text>}
       </View>
       {release && compareVersions(release.version, APP_VERSION) > 0 && (
         <SettingsActionRow icon="download-circle" title={release.name} subtitle={release.apkName ?? `Versione ${release.version}`} value="Apri" onPress={() => void Linking.openURL(release.url)} />
       )}
-      <SettingsActionRow icon="open-in-new" title="Apri le release private" subtitle="Il browser utilizza la sessione GitHub autorizzata" value="GitHub" onPress={() => void Linking.openURL(PRIVATE_RELEASES_URL)} />
-      <SettingsActionRow icon="key-remove" title="Rimuovi token GitHub" subtitle="Cancella la credenziale salvata da questo dispositivo" disabled={!token && Platform.OS !== 'web'} destructive onPress={() => {
-        void clearGithubReleaseToken().then(() => {
-          setToken('');
-          setRelease(null);
-          setStatus('Token GitHub rimosso.');
-        });
-      }} />
-      {Platform.OS === 'web' && <Text style={styles.updateHelp}>Sul web il token non viene memorizzato: resta valido soltanto finché questa schermata è aperta.</Text>}
+      <SettingsActionRow icon="open-in-new" title="Apri le release" subtitle="Download pubblico dell’APK e del checksum" value="GitHub" onPress={() => void Linking.openURL(PRIVATE_RELEASES_URL)} />
     </View>
   );
 }
@@ -3343,9 +3379,9 @@ function MoreActionsModal({
   );
 }
 
-function PlaylistPickerModal({ visible, playlists, username, onClose, onPick }: { visible: boolean; playlists: Playlist[]; username: string; onClose: () => void; onPick: (playlist: Playlist) => void }) {
+function PlaylistPickerModal({ visible, playlists, username, personalPlaylistIds, onClose, onPick }: { visible: boolean; playlists: Playlist[]; username: string; personalPlaylistIds: ReadonlySet<string>; onClose: () => void; onPick: (playlist: Playlist) => void }) {
   if (!visible) return null;
-  const editablePlaylists = partitionPlaylists(playlists, username).owned;
+  const editablePlaylists = partitionPlaylists(playlists, username, personalPlaylistIds).owned;
   return (
     <View style={styles.sheetOverlay}>
       <Pressable style={styles.scrim} onPress={onClose} />

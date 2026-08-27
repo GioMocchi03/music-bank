@@ -2,8 +2,8 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 export { compareVersions } from '../utils/version';
 
-export const APP_VERSION = '1.3.8';
-export const APP_BUILD = 22;
+export const APP_VERSION = '1.3.9';
+export const APP_BUILD = 23;
 export const PRIVATE_RELEASES_URL = 'https://github.com/GioMocchi03/music-bank/releases/latest';
 
 const TOKEN_KEY = 'music-bank.github.release-token.v1';
@@ -45,9 +45,8 @@ export async function clearGithubReleaseToken(): Promise<void> {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
 }
 
-export async function fetchLatestPrivateRelease(token: string, signal?: AbortSignal): Promise<GithubRelease> {
+export async function fetchLatestPrivateRelease(token = '', signal?: AbortSignal): Promise<GithubRelease> {
   const normalized = token.trim();
-  if (!normalized) throw new Error('Inserisci un token GitHub con accesso in lettura alla repository privata.');
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
@@ -58,13 +57,13 @@ export async function fetchLatestPrivateRelease(token: string, signal?: AbortSig
       signal: controller.signal,
       headers: {
         Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${normalized}`,
+        ...(normalized ? { Authorization: `Bearer ${normalized}` } : {}),
         'X-GitHub-Api-Version': '2022-11-28',
       },
     });
     if (response.status === 401) throw new Error('Token GitHub non valido o scaduto.');
-    if (response.status === 403) throw new Error('Il token non ha il permesso Contents: read oppure ha raggiunto il limite GitHub.');
-    if (response.status === 404) throw new Error('Repository o release non accessibile con questo account GitHub.');
+    if (response.status === 403) throw new Error('GitHub ha temporaneamente raggiunto il limite delle richieste. Riprova più tardi.');
+    if (response.status === 404) throw new Error('Repository o release GitHub non disponibile.');
     if (!response.ok) throw new Error(`Controllo aggiornamenti non riuscito (${response.status}).`);
     const payload = await response.json() as {
       tag_name?: string;

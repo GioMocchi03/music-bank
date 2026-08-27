@@ -33,8 +33,8 @@ const songs = albums.flatMap((album, albumIndex) =>
   })),
 );
 const playlists = [
-  { id: 'p1', name: 'Preferiti test', owner: 'demo', public: false, songCount: 3, entry: songs.slice(0, 3) },
-  { id: 'p2', name: 'Dal server', owner: 'admin', public: true, songCount: 3, entry: songs.slice(3, 6) },
+  { id: 'p1', name: albums[0].name, owner: 'demo', public: false, songCount: albums[0].songCount, entry: songs.slice(0, 3) },
+  { id: 'p2', name: 'Tekno - Sal compilation', owner: 'admin', public: true, songCount: 3, entry: [songs[0], songs[3], songs[6]] },
 ];
 
 function envelope(payload = {}) {

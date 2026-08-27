@@ -485,6 +485,12 @@ export class NavidromeClient {
     };
   }
 
+  async getPlaylistEntries(id: string, signal?: AbortSignal): Promise<Song[]> {
+    const payload = await this.request('getPlaylist', { id }, signal);
+    if (!payload.playlist) throw new Error('Playlist non trovata.');
+    return payload.playlist.entry ?? [];
+  }
+
   async addSongToPlaylist(playlistId: string, songId: string, signal?: AbortSignal): Promise<void> {
     await this.request('updatePlaylist', { playlistId, songIdToAdd: songId }, signal);
   }

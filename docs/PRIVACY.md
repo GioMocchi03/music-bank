@@ -1,6 +1,6 @@
 # Privacy e dati
 
-Descrizione del codice 1.3.8, non certificazione di sicurezza né informativa del server.
+Descrizione del codice 1.3.9, non certificazione di sicurezza né informativa del server.
 
 L'app contatta il server configurato per accesso, libreria, streaming, download,
 preferiti, playlist e scrobbling. Il server può registrare account, IP e richieste.
