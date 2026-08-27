@@ -5,12 +5,19 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
-    groups:
-      expo-react-native:
-        patterns: ["expo", "expo-*", "@expo/*", "react", "react-dom", "react-native", "react-native-*", "@react-native*"]
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
+      # Expo SDK 57 defines a tested React/React Native dependency set.
+      # Upgrade this group together with the Expo SDK, using `npx expo install`.
+      - dependency-name: "expo"
+      - dependency-name: "expo-*"
+      - dependency-name: "@expo/*"
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-*"
+      - dependency-name: "@react-native/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
