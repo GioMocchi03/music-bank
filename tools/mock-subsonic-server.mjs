@@ -33,8 +33,8 @@ const songs = albums.flatMap((album, albumIndex) =>
   })),
 );
 const playlists = [
-  { id: 'p1', name: 'Preferiti test', owner: 'demo', public: false, songCount: 4 },
-  { id: 'p2', name: 'Dal server', owner: 'admin', public: true, songCount: 8 },
+  { id: 'p1', name: 'Preferiti test', owner: 'demo', public: false, songCount: 3, entry: songs.slice(0, 3) },
+  { id: 'p2', name: 'Dal server', owner: 'admin', public: true, songCount: 3, entry: songs.slice(3, 6) },
 ];
 
 function envelope(payload = {}) {
@@ -96,8 +96,18 @@ const server = http.createServer((request, response) => {
       { value: 'Unknown', albumCount: 20, songCount: 100 },
     ] } }));
   } else if (endpoint === 'getPlaylists') {
-    response.end(envelope({ playlists: { playlist: playlists } }));
+    response.end(envelope({ playlists: { playlist: playlists.map(({ entry, ...playlist }) => playlist) } }));
   } else if (endpoint === 'createPlaylist') {
+    const playlistId = url.searchParams.get('playlistId');
+    if (playlistId) {
+      const playlist = playlists.find((item) => item.id === playlistId);
+      if (playlist) {
+        playlist.entry = url.searchParams.getAll('songId').map((id) => songs.find((song) => song.id === id)).filter(Boolean);
+        playlist.songCount = playlist.entry.length;
+      }
+      response.end(envelope({ playlist }));
+      return;
+    }
     const playlist = {
       id: `p${playlists.length + 1}`,
       name: url.searchParams.get('name') ?? 'Nuova playlist',
@@ -105,12 +115,30 @@ const server = http.createServer((request, response) => {
       public: false,
       songCount: 0,
       duration: 0,
+      entry: [],
     };
     playlists.unshift(playlist);
     response.end(envelope({ playlist }));
   } else if (endpoint === 'getPlaylist') {
     const playlist = playlists.find((item) => item.id === url.searchParams.get('id')) ?? playlists[0];
-    response.end(envelope({ playlist: { ...playlist, entry: [] } }));
+    response.end(envelope({ playlist }));
+  } else if (endpoint === 'updatePlaylist') {
+    const playlist = playlists.find((item) => item.id === url.searchParams.get('playlistId'));
+    if (playlist) {
+      if (url.searchParams.has('name')) playlist.name = url.searchParams.get('name') ?? playlist.name;
+      if (url.searchParams.has('comment')) playlist.comment = url.searchParams.get('comment') ?? '';
+      if (url.searchParams.has('public')) playlist.public = url.searchParams.get('public') === 'true';
+      for (const songId of url.searchParams.getAll('songIdToAdd')) {
+        const song = songs.find((item) => item.id === songId);
+        if (song) playlist.entry.push(song);
+      }
+      playlist.songCount = playlist.entry.length;
+    }
+    response.end(envelope());
+  } else if (endpoint === 'deletePlaylist') {
+    const index = playlists.findIndex((item) => item.id === url.searchParams.get('id'));
+    if (index >= 0) playlists.splice(index, 1);
+    response.end(envelope());
   } else if (endpoint === 'search3') {
     response.end(envelope({ searchResult3: { song: url.searchParams.get('songOffset') === '0' ? songs : [] } }));
   } else if (endpoint === 'getInternetRadioStations') {

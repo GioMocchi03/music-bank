@@ -63,9 +63,8 @@ Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 | Web | Interfaccia per sviluppo/verifica; niente download nativi o Android Auto. Il server deve consentire CORS. |
 | iOS | Sorgenti condivisi ed export JavaScript verificati; nessuna IPA o pubblicazione App Store. Serve un build iOS dedicato. |
 
-La **1.3.7 (21)** ha superato compilazione Android, TypeScript, 33 test automatici
-e verifiche UI web con dati simulati. **Non è ancora stata collaudata su telefono
-o auto reali durante questo rilascio.** Vedi [verifiche e limiti](docs/releases/1.3.7.md).
+La **1.3.8 (22)** include gestione completa delle playlist personali e controllo
+autenticato delle release private. Vedi [verifiche e limiti](docs/releases/1.3.8.md).
 
 ## Primo accesso
 

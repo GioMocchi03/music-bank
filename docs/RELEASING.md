@@ -79,8 +79,8 @@ gh release edit v1.3.7 --draft=false --latest
 
 Per una versione sperimentale usare una prerelease, senza renderla latest.
 Il collegamento stabile per gli utenti è `/releases/latest`; gli Assets contengono
-APK e checksum. Il manifest `release.json` è disponibile per strumenti esterni,
-ma **non abilita un updater integrato nell'app**.
+APK e checksum. Il controllo integrato usa l'API GitHub con un token personale
+fornito dall'utente e non deve mai includere credenziali nell'APK.
 
 ## Checklist
 

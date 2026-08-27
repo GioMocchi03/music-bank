@@ -21,31 +21,33 @@ e il numero di build deve aumentare. Non disinstallare per risolvere un errore s
 considerare la perdita di dati locali e download. Un APK di sviluppo o firmato da
 terzi non può aggiornare direttamente la release ufficiale.
 
-Notifiche GitHub: **Watch → Custom → Releases**. Non c'è un updater nell'app né
-aggiornamenti JavaScript OTA abilitati. I download locali non sono un backup.
+Notifiche GitHub: **Watch → Custom → Releases**. Dalla 1.3.8 l'app può controllare
+la release privata con un token fine-grained `Contents: read` salvato nel SecureStore;
+il download si apre nel browser autenticato. Non sono abilitati aggiornamenti
+JavaScript OTA. I download locali non sono un backup.
 
 ## Verifica del file
 
-Ogni APK ha un file `.apk.sha256`. Per la 1.3.7 build 21:
+Ogni APK ha un file `.apk.sha256`. Per la 1.3.8 build 22:
 
 ```powershell
-Get-FileHash .\MusicBank-1.3.7-build21.apk -Algorithm SHA256
+Get-FileHash .\MusicBank-1.3.8-build22.apk -Algorithm SHA256
 ```
 
 ```bash
-sha256sum -c MusicBank-1.3.7-build21.apk.sha256
+sha256sum -c MusicBank-1.3.8-build22.apk.sha256
 ```
 
 SHA-256 atteso:
 
 ```text
-fb3438f80651053342b2a06b849ff21b2e2eb1dd4eb78669a3889be4571c9c15
+68206d38fd6252b715a0f3229a6801dd856459b9f2c008433a84e0f0fac2060a
 ```
 
 Con Android Build Tools è possibile controllare anche la firma:
 
 ```bash
-apksigner verify --verbose --print-certs MusicBank-1.3.7-build21.apk
+apksigner verify --verbose --print-certs MusicBank-1.3.8-build22.apk
 ```
 
 SHA-256 del certificato ufficiale:

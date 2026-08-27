@@ -119,6 +119,7 @@ type SubsonicPayload = {
 };
 
 type SubsonicEnvelope = { 'subsonic-response': SubsonicPayload };
+type RequestParams = Record<string, string | string[]>;
 
 const API_VERSION = '1.16.1';
 const CLIENT_NAME = 'music-bank';
@@ -488,6 +489,27 @@ export class NavidromeClient {
     await this.request('updatePlaylist', { playlistId, songIdToAdd: songId }, signal);
   }
 
+  async updatePlaylistMetadata(
+    playlistId: string,
+    values: { name: string; comment?: string; public: boolean },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.request('updatePlaylist', {
+      playlistId,
+      name: values.name,
+      comment: values.comment ?? '',
+      public: String(values.public),
+    }, signal);
+  }
+
+  async replacePlaylistSongs(playlistId: string, songIds: string[], signal?: AbortSignal): Promise<void> {
+    await this.request('createPlaylist', { playlistId, songId: songIds }, signal);
+  }
+
+  async deletePlaylist(playlistId: string, signal?: AbortSignal): Promise<void> {
+    await this.request('deletePlaylist', { id: playlistId }, signal);
+  }
+
   async getInternetRadioStations(signal?: AbortSignal): Promise<InternetRadioStation[]> {
     const payload = await this.request('getInternetRadioStations', {}, signal);
     return (payload.internetRadioStations?.internetRadioStation ?? []).map((station) => ({
@@ -561,14 +583,17 @@ export class NavidromeClient {
     };
   }
 
-  private url(endpoint: string, params: Record<string, string>): Promise<string> {
-    const query = new URLSearchParams({ ...this.authParams(), ...params });
+  private url(endpoint: string, params: RequestParams): Promise<string> {
+    const query = new URLSearchParams(this.authParams());
+    Object.entries(params).forEach(([key, value]) => {
+      (Array.isArray(value) ? value : [value]).forEach((entry) => query.append(key, entry));
+    });
     return Promise.resolve(`${this.baseUrl}/rest/${endpoint}.view?${query.toString()}`);
   }
 
   private async request(
     endpoint: string,
-    params: Record<string, string> = {},
+    params: RequestParams = {},
     externalSignal?: AbortSignal,
   ): Promise<SubsonicPayload> {
     const controller = new AbortController();

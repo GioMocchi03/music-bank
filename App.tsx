@@ -74,8 +74,22 @@ import {
   rankSearchItems,
 } from './src/utils/search';
 import {
+  APP_BUILD,
+  APP_VERSION,
+  clearGithubReleaseToken,
+  compareVersions,
+  fetchLatestPrivateRelease,
+  GithubRelease,
+  loadGithubReleaseToken,
+  PRIVATE_RELEASES_URL,
+  saveGithubReleaseToken,
+} from './src/updates/githubUpdates';
+import {
+  isPlaylistOwnedBy,
+  movePlaylistItem,
   normalizePlaylistName,
   partitionPlaylists,
+  removePlaylistItem,
   validatePlaylistName,
 } from './src/utils/playlists';
 
@@ -91,7 +105,7 @@ type LibraryMode =
   | 'years'
   | 'radio'
   | 'offline';
-type SettingsSection = 'hub' | 'server' | 'playback' | 'offline' | 'interface' | 'sync' | 'about';
+type SettingsSection = 'hub' | 'server' | 'playback' | 'offline' | 'interface' | 'sync' | 'updates' | 'about';
 type Detail =
   | { type: 'album'; id: string }
   | { type: 'artist'; id: string }
@@ -203,6 +217,7 @@ function MusicBankApp() {
   const [actionSong, setActionSong] = useState<Song | null>(null);
   const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
   const [createPlaylistOpen, setCreatePlaylistOpen] = useState(false);
+  const [managePlaylistOpen, setManagePlaylistOpen] = useState(false);
   const [speedOpen, setSpeedOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
   const [clearDownloadsOpen, setClearDownloadsOpen] = useState(false);
@@ -436,6 +451,10 @@ function MusicBankApp() {
         setCreatePlaylistOpen(false);
         return true;
       }
+      if (managePlaylistOpen) {
+        setManagePlaylistOpen(false);
+        return true;
+      }
       if (actionsOpen) {
         setActionsOpen(false);
         setActionSong(null);
@@ -468,7 +487,7 @@ function MusicBankApp() {
       return false;
     });
     return () => subscription.remove();
-  }, [actionsOpen, clearDownloadsOpen, createPlaylistOpen, detail, disconnectOpen, eqOpen, libraryMode, playerOpen, playlistPickerOpen, queueOpen, settingsSection, sleepOpen, speedOpen, tab]);
+  }, [actionsOpen, clearDownloadsOpen, createPlaylistOpen, detail, disconnectOpen, eqOpen, libraryMode, managePlaylistOpen, playerOpen, playlistPickerOpen, queueOpen, settingsSection, sleepOpen, speedOpen, tab]);
 
   async function disconnectServer() {
     if (!bootstrapReady || syncInFlightRef.current || disconnectingRef.current || downloadQueueRef.current.busy) return;
@@ -1121,6 +1140,8 @@ function MusicBankApp() {
               onAlbum={(album) => setDetail({ type: 'album', id: album.id })}
               onArtist={(artist) => setDetail({ type: 'artist', id: artist.id })}
               onPlaySongs={(songs, index = 0) => void loadSong(songs, index)}
+              playlistEditable={!!detailPlaylist && isPlaylistOwnedBy(detailPlaylist, authenticatedUsername)}
+              onManagePlaylist={() => setManagePlaylistOpen(true)}
               onMoreSong={(song) => {
                 setActionSong(song);
                 setActionsOpen(true);
@@ -1170,7 +1191,7 @@ function MusicBankApp() {
                 else setSettingsSection('server');
               }}
               onShareDiagnostics={() => void Share.share({
-                message: `Music Bank 1.3.7 · ${albums.length} album · ${songs.length} brani · ${genres.length} generi · Navidrome ${connected ? 'online' : 'offline'}`,
+                message: `Music Bank ${APP_VERSION} · ${albums.length} album · ${songs.length} brani · ${genres.length} generi · Navidrome ${connected ? 'online' : 'offline'}`,
               })}
             />
           ) : (
@@ -1449,6 +1470,42 @@ function MusicBankApp() {
             radios,
             syncedAt: Date.now(),
           }).catch(() => setMessage(`Playlist “${name}” creata sul server · cache locale da aggiornare.`));
+        }}
+      />
+      <ManagePlaylistModal
+        visible={managePlaylistOpen}
+        playlist={detailPlaylist}
+        onClose={() => setManagePlaylistOpen(false)}
+        onSave={async ({ name, comment, public: isPublic, songs: orderedSongs }) => {
+          const client = clientRef.current;
+          const playlist = detailPlaylist;
+          if (!client || !playlist || !isPlaylistOwnedBy(playlist, authenticatedUsername)) {
+            throw new Error('Questa playlist non è modificabile dall’account collegato.');
+          }
+          await client.updatePlaylistMetadata(playlist.id, { name, comment, public: isPublic });
+          await client.replacePlaylistSongs(playlist.id, orderedSongs.map((song) => song.id));
+          const [updatedDetail, updatedPlaylists] = await Promise.all([
+            client.getPlaylist(playlist.id),
+            client.getPlaylists(),
+          ]);
+          setDetailPlaylist(updatedDetail);
+          setPlaylists(updatedPlaylists);
+          setMessage(`Playlist “${name}” aggiornata.`);
+          void saveLibrary({ albums, artists, genres, playlists: updatedPlaylists, songs, radios, syncedAt: Date.now() });
+        }}
+        onDelete={async () => {
+          const client = clientRef.current;
+          const playlist = detailPlaylist;
+          if (!client || !playlist || !isPlaylistOwnedBy(playlist, authenticatedUsername)) {
+            throw new Error('Questa playlist non è eliminabile dall’account collegato.');
+          }
+          await client.deletePlaylist(playlist.id);
+          const updatedPlaylists = await client.getPlaylists();
+          setPlaylists(updatedPlaylists);
+          setDetailPlaylist(null);
+          setDetail(null);
+          setMessage(`Playlist “${playlist.name}” eliminata.`);
+          void saveLibrary({ albums, artists, genres, playlists: updatedPlaylists, songs, radios, syncedAt: Date.now() });
         }}
       />
       <ChoiceModal
@@ -2113,6 +2170,8 @@ function DetailScreen({
   onAlbum,
   onArtist,
   onPlaySongs,
+  playlistEditable,
+  onManagePlaylist,
   onMoreSong,
 }: {
   detail: NonNullable<Detail>;
@@ -2125,6 +2184,8 @@ function DetailScreen({
   onAlbum: (album: Album) => void;
   onArtist: (artist: Artist) => void;
   onPlaySongs: (songs: Song[], index?: number) => void;
+  playlistEditable: boolean;
+  onManagePlaylist: () => void;
   onMoreSong: (song: Song) => void;
 }) {
   const [genreView, setGenreView] = useState<GenreView>('albums');
@@ -2267,6 +2328,16 @@ function DetailScreen({
           subtitle={`${playlist.songCount ?? songs.length} brani · ${formatTime(playlist.duration ?? 0)}`}
           onPlay={() => onPlaySongs(songs)}
         />
+        {playlistEditable && (
+          <Pressable style={styles.playlistManageButton} onPress={onManagePlaylist}>
+            <MaterialCommunityIcons name="playlist-edit" size={21} color={lime} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingsRowTitle}>Gestisci playlist</Text>
+              <Text style={styles.settingsRowSubtitle}>Rinomina, condividi, riordina o rimuovi brani</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={22} color="#777580" />
+          </Pressable>
+        )}
         <CollectionDownloadAction songs={songs} kind="playlist" />
         </>
       )}
@@ -2557,9 +2628,10 @@ function SettingsScreen({
             <SettingsActionRow icon="sync" title="Sincronizzazione completa" subtitle={`${songCount} brani · album, artisti, generi, playlist e radio`} value={busy ? 'In corso…' : 'Avvia'} disabled={busy} onPress={onSync} />
           </View>
         )}
+        {section === 'updates' && <UpdateSettings />}
         {section === 'about' && (
           <View style={styles.settingsActionGroup}>
-            <SettingsActionRow icon="information-outline" title="Music Bank" subtitle="Versione 1.3.7 · build Android 21" value="Condividi" onPress={onShareDiagnostics} />
+            <SettingsActionRow icon="information-outline" title="Music Bank" subtitle={`Versione ${APP_VERSION} · build Android ${APP_BUILD}`} value="Condividi" onPress={onShareDiagnostics} />
             <SettingsActionRow icon="shield-lock-outline" title="Credenziali e privacy" subtitle={Platform.OS === 'web' ? 'Salvataggio locale del browser' : 'Password cifrata nel SecureStore del dispositivo'} value="Provider" onPress={() => onSection('server')} />
             <SettingsActionRow icon="book-open-variant" title="Protocollo OpenSubsonic" subtitle="Documentazione delle API utilizzate" value="Apri" onPress={() => void Linking.openURL('https://opensubsonic.netlify.app/docs/')} />
           </View>
@@ -2584,12 +2656,13 @@ function SettingsScreen({
       rows: [
         ['server', 'server-network', 'Media provider Navidrome', connected ? 'Connesso' : 'Da collegare'],
         ['sync', 'sync', 'Sync manager', `${songCount} brani indicizzati`],
+        ['updates', 'update', 'Aggiornamenti privati', `Versione installata ${APP_VERSION}`],
       ],
     },
     {
       title: 'Dettagli',
       rows: [
-        ['about', 'information-outline', 'Dettagli applicazione', 'Music Bank 1.3.7 · client Subsonic'],
+        ['about', 'information-outline', 'Dettagli applicazione', `Music Bank ${APP_VERSION} · client Subsonic`],
       ],
     },
   ];
@@ -2611,6 +2684,72 @@ function SettingsScreen({
         </View>
       ))}
     </ScrollView>
+  );
+}
+
+function UpdateSettings() {
+  const [token, setToken] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState('');
+  const [release, setRelease] = useState<GithubRelease | null>(null);
+
+  const check = useCallback(async (candidate: string) => {
+    setChecking(true);
+    setStatus('Controllo della release privata…');
+    setRelease(null);
+    try {
+      if (Platform.OS !== 'web') await saveGithubReleaseToken(candidate);
+      const latest = await fetchLatestPrivateRelease(candidate);
+      setRelease(latest);
+      const comparison = compareVersions(latest.version, APP_VERSION);
+      setStatus(comparison > 0
+        ? `Aggiornamento ${latest.version} disponibile.`
+        : comparison === 0
+          ? 'Music Bank è aggiornato.'
+          : `La versione installata è più recente della release ${latest.version}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void loadGithubReleaseToken().then((savedToken) => {
+      if (!active) return;
+      setToken(savedToken);
+      if (savedToken) void check(savedToken);
+    });
+    return () => { active = false; };
+  }, [check]);
+
+  return (
+    <View style={styles.settingsActionGroup}>
+      <SettingsActionRow icon="cellphone-check" title="Versione installata" subtitle={`Music Bank ${APP_VERSION} · build ${APP_BUILD}`} value="Installata" onPress={() => {}} />
+      <View style={styles.updateCard}>
+        <Text style={styles.settingsRowTitle}>Accesso alla release privata</Text>
+        <Text style={styles.updateHelp}>Usa un token personale fine-grained limitato a questa repository con il solo permesso Contents: read. Il token resta nel SecureStore del dispositivo e non viene inserito nei link o nei log.</Text>
+        <Field label="Token GitHub" icon="github" value={token} secure onChange={setToken} />
+        <Pressable disabled={checking || !token.trim()} style={[styles.syncButton, (checking || !token.trim()) && styles.buttonDisabled]} onPress={() => void check(token)}>
+          {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
+          <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Salva e controlla'}</Text>
+        </Pressable>
+        {!!status && <Text style={styles.statusText}>{status}</Text>}
+      </View>
+      {release && compareVersions(release.version, APP_VERSION) > 0 && (
+        <SettingsActionRow icon="download-circle" title={release.name} subtitle={release.apkName ?? `Versione ${release.version}`} value="Apri" onPress={() => void Linking.openURL(release.url)} />
+      )}
+      <SettingsActionRow icon="open-in-new" title="Apri le release private" subtitle="Il browser utilizza la sessione GitHub autorizzata" value="GitHub" onPress={() => void Linking.openURL(PRIVATE_RELEASES_URL)} />
+      <SettingsActionRow icon="key-remove" title="Rimuovi token GitHub" subtitle="Cancella la credenziale salvata da questo dispositivo" disabled={!token && Platform.OS !== 'web'} destructive onPress={() => {
+        void clearGithubReleaseToken().then(() => {
+          setToken('');
+          setRelease(null);
+          setStatus('Token GitHub rimosso.');
+        });
+      }} />
+      {Platform.OS === 'web' && <Text style={styles.updateHelp}>Sul web il token non viene memorizzato: resta valido soltanto finché questa schermata è aperta.</Text>}
+    </View>
   );
 }
 
@@ -3302,6 +3441,141 @@ function CreatePlaylistModal({ visible, onClose, onCreate }: { visible: boolean;
   );
 }
 
+type PlaylistDraft = { name: string; comment: string; public: boolean; songs: Song[] };
+
+function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
+  visible: boolean;
+  playlist: Playlist | null;
+  onClose: () => void;
+  onSave: (draft: PlaylistDraft) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [comment, setComment] = useState('');
+  const [isPublic, setIsPublic] = useState(false);
+  const [draftSongs, setDraftSongs] = useState<Song[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !playlist) return;
+    setName(playlist.name);
+    setComment(playlist.comment ?? '');
+    setIsPublic(!!playlist.public);
+    setDraftSongs(playlist.entry ?? []);
+    setBusy(false);
+    setError('');
+    setConfirmDelete(false);
+  }, [playlist, visible]);
+
+  if (!visible || !playlist) return null;
+
+  const moveSong = (index: number, direction: -1 | 1) => {
+    setDraftSongs((current) => movePlaylistItem(current, index, direction));
+  };
+
+  const save = async () => {
+    const validationError = validatePlaylistName(name);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      await onSave({
+        name: normalizePlaylistName(name),
+        comment: comment.trim(),
+        public: isPublic,
+        songs: draftSongs,
+      });
+      onClose();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      await onDelete();
+      onClose();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : String(deleteError));
+      setConfirmDelete(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={styles.sheetOverlay}>
+      <Pressable style={styles.scrim} onPress={busy ? undefined : onClose} />
+      <SafeAreaView style={[styles.sheet, styles.playlistManageSheet]} edges={['bottom']}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>Gestisci playlist</Text>
+        <Text style={styles.sheetSubtitle}>Le modifiche vengono salvate sul server.</Text>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.playlistManageContent}>
+          <View style={styles.inputWrap}>
+            <MaterialCommunityIcons name="playlist-edit" size={21} color={lime} />
+            <TextInput value={name} onChangeText={setName} editable={!busy} maxLength={100} placeholder="Nome" placeholderTextColor="#5D5B66" style={styles.input} />
+          </View>
+          <View style={styles.inputWrap}>
+            <MaterialCommunityIcons name="text" size={21} color={lime} />
+            <TextInput value={comment} onChangeText={setComment} editable={!busy} maxLength={200} placeholder="Descrizione facoltativa" placeholderTextColor="#5D5B66" style={styles.input} />
+          </View>
+          <Pressable style={styles.settingsRow} disabled={busy} onPress={() => setIsPublic((value) => !value)}>
+            <MaterialCommunityIcons name={isPublic ? 'account-multiple' : 'lock-outline'} size={24} color={lime} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingsRowTitle}>{isPublic ? 'Playlist condivisa' : 'Playlist personale'}</Text>
+              <Text style={styles.settingsRowSubtitle}>{isPublic ? 'Visibile agli altri utenti del server' : 'Visibile soltanto al tuo account'}</Text>
+            </View>
+            <View style={[styles.switch, isPublic && styles.switchOn]}><View style={[styles.switchThumb, isPublic && styles.switchThumbOn]} /></View>
+          </Pressable>
+
+          <SectionTitle title="Ordine dei brani" subtitle={`${draftSongs.length} nella playlist`} />
+          {draftSongs.map((song, index) => (
+            <View key={`${song.id}-${index}`} style={styles.playlistEditRow}>
+              <Text style={styles.trackNumber}>{index + 1}</Text>
+              <View style={styles.trackCopy}>
+                <Text numberOfLines={1} style={styles.trackTitle}>{song.title}</Text>
+                <Text numberOfLines={1} style={styles.trackSubtitle}>{song.artist ?? 'Artista sconosciuto'}</Text>
+              </View>
+              <Pressable disabled={busy || index === 0} style={styles.playlistEditIcon} onPress={() => moveSong(index, -1)}>
+                <MaterialCommunityIcons name="chevron-up" size={21} color={index === 0 ? '#44424C' : '#AAA7B2'} />
+              </Pressable>
+              <Pressable disabled={busy || index === draftSongs.length - 1} style={styles.playlistEditIcon} onPress={() => moveSong(index, 1)}>
+                <MaterialCommunityIcons name="chevron-down" size={21} color={index === draftSongs.length - 1 ? '#44424C' : '#AAA7B2'} />
+              </Pressable>
+              <Pressable disabled={busy} style={styles.playlistEditIcon} onPress={() => setDraftSongs((current) => removePlaylistItem(current, index))}>
+                <MaterialCommunityIcons name="delete-outline" size={20} color="#FF7B8B" />
+              </Pressable>
+            </View>
+          ))}
+          {!draftSongs.length && <PlaylistEmptyRow icon="playlist-remove" text="La playlist è vuota. Potrai aggiungere brani dal menu Più azioni." />}
+          {!!error && <Text style={styles.playlistError}>{error}</Text>}
+          <Pressable disabled={busy} style={[styles.syncButton, busy && styles.buttonDisabled]} onPress={() => void save()}>
+            {busy ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="content-save" size={21} color="#10130B" />}
+            <Text style={styles.syncButtonText}>{busy ? 'Salvataggio…' : 'Salva modifiche'}</Text>
+          </Pressable>
+          <Pressable disabled={busy} style={styles.playlistDeleteButton} onPress={() => void remove()}>
+            <MaterialCommunityIcons name="delete-forever-outline" size={21} color="#FF7B8B" />
+            <Text style={styles.playlistDeleteText}>{confirmDelete ? 'Conferma eliminazione definitiva' : 'Elimina playlist'}</Text>
+          </Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+}
+
 function ChoiceModal({ visible, title, description, options, onClose, onPick }: { visible: boolean; title: string; description?: string; options: string[]; onClose: () => void; onPick: (value: string) => void }) {
   if (!visible) return null;
   return (
@@ -3386,6 +3660,7 @@ function settingsSectionTitle(section: SettingsSection): string {
     offline: 'Download e ascolto offline',
     interface: 'Interfaccia',
     sync: 'Sync manager',
+    updates: 'Aggiornamenti',
     about: 'Dettagli',
   };
   return titles[section];
@@ -3553,6 +3828,13 @@ const styles = StyleSheet.create({
   playlistEmptyRow: { minHeight: 68, paddingHorizontal: 16, borderRadius: 17, borderWidth: 1, borderStyle: 'dashed', borderColor: '#302E38', flexDirection: 'row', alignItems: 'center', gap: 12 },
   playlistEmptyText: { flex: 1, color: '#777580', fontSize: 11, lineHeight: 17 },
   playlistError: { color: '#FF7B8B', fontSize: 11, fontWeight: '700', marginTop: 9 },
+  playlistManageButton: { minHeight: 68, paddingHorizontal: 16, borderRadius: 17, backgroundColor: '#17161E', borderWidth: 1, borderColor: '#302E38', flexDirection: 'row', alignItems: 'center', gap: 12 },
+  playlistManageSheet: { maxHeight: '92%' },
+  playlistManageContent: { gap: 10, paddingBottom: 8 },
+  playlistEditRow: { minHeight: 58, paddingHorizontal: 9, borderRadius: 14, backgroundColor: '#1A1921', flexDirection: 'row', alignItems: 'center', gap: 6 },
+  playlistEditIcon: { width: 34, height: 38, alignItems: 'center', justifyContent: 'center' },
+  playlistDeleteButton: { minHeight: 52, borderRadius: 16, borderWidth: 1, borderColor: '#66313B', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
+  playlistDeleteText: { color: '#FF8B98', fontSize: 12, fontWeight: '900' },
   listRow: { minHeight: 68, padding: 10, borderRadius: 17, backgroundColor: '#131219', borderWidth: 1, borderColor: '#27252E', flexDirection: 'row', alignItems: 'center', gap: 12 },
   listIcon: { width: 46, height: 46, borderRadius: 13, backgroundColor: '#262238', alignItems: 'center', justifyContent: 'center' },
   detailScroll: { paddingHorizontal: 28, paddingTop: 8, paddingBottom: 150, gap: 22 },
@@ -3574,6 +3856,8 @@ const styles = StyleSheet.create({
   connectionScroll: { paddingHorizontal: 28, paddingBottom: 120 },
   settingsScroll: { paddingHorizontal: 28, paddingBottom: 140, gap: 26 },
   settingsActionGroup: { gap: 8 },
+  updateCard: { borderRadius: 20, padding: 18, backgroundColor: '#15141B', borderWidth: 1, borderColor: '#292731' },
+  updateHelp: { color: '#85838F', fontSize: 11, lineHeight: 17, marginTop: 7, marginBottom: 14 },
   settingsGroupTitle: { color: lime, fontSize: 12, fontWeight: '900', letterSpacing: 1.5, marginBottom: 4 },
   settingsRow: { minHeight: 78, borderRadius: 18, paddingHorizontal: 18, backgroundColor: '#15141B', borderWidth: 1, borderColor: '#292731', flexDirection: 'row', alignItems: 'center', gap: 15 },
   settingsRowTitle: { color: '#F0EFF3', fontSize: 14, fontWeight: '800' },

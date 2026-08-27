@@ -32,3 +32,15 @@ export function partitionPlaylists(playlists: Playlist[], username: string): {
   });
   return { owned, server };
 }
+
+export function movePlaylistItem<Item>(items: Item[], index: number, direction: -1 | 1): Item[] {
+  const destination = index + direction;
+  if (index < 0 || index >= items.length || destination < 0 || destination >= items.length) return items;
+  const next = [...items];
+  [next[index], next[destination]] = [next[destination], next[index]];
+  return next;
+}
+
+export function removePlaylistItem<Item>(items: Item[], index: number): Item[] {
+  return index < 0 || index >= items.length ? items : items.filter((_, itemIndex) => itemIndex !== index);
+}

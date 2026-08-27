@@ -30,6 +30,23 @@ account: il protocollo consente di modificare esclusivamente quelle di cui sei
 proprietario. Se il server nega la creazione, verifica che l'utente abbia il ruolo
 playlist nelle autorizzazioni Navidrome.
 
+Apri una playlist personale e premi **Gestisci playlist** per rinominarla, aggiungere
+una descrizione, renderla personale/condivisa, cambiare l'ordine dei brani, rimuoverli
+o eliminare definitivamente la playlist. Le playlist della sezione server restano
+in sola lettura.
+
+## Aggiornamenti privati
+
+In **Impostazioni → Aggiornamenti privati** puoi controllare le release senza rendere
+pubblica la repository. Serve un token GitHub fine-grained del proprio account,
+limitato alla repository `music-bank` con il solo permesso **Contents: read**. Su
+Android il token viene conservato in SecureStore; non viene inserito nell'APK, nei
+link o nei log. Puoi rimuoverlo dalla stessa schermata.
+
+Quando è disponibile una versione più recente, l'app mostra la release e apre il
+download nel browser. GitHub richiede comunque l'accesso di un account autorizzato.
+Sul web il token non viene memorizzato.
+
 ## Offline
 
 - Menu brano → **Scarica per ascolto offline**.
@@ -61,5 +78,5 @@ non viene inviato al nuovo server per preferiti, playlist o streaming con lo ste
 
 È incluso un servizio Media3 con catalogo dedicato. Sincronizza prima del collegamento.
 Non presumere che i download dell'app siano disponibili anche nel servizio Auto:
-questa integrazione offline richiede un lavoro separato. La 1.3.7 non è ancora
+questa integrazione offline richiede un lavoro separato. La 1.3.8 non è ancora
 stata collaudata su auto reali durante questo rilascio.
