@@ -47,7 +47,7 @@ Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 
 | Area | Disponibile |
 | --- | --- |
-| Libreria | Album, artisti, tracce, generi, anni, playlist, preferiti e ricerca locale/remota tollerante agli errori. |
+| Libreria | Album, artisti, tracce, generi, anni, playlist personali/server con creazione in app, preferiti e ricerca locale/remota tollerante agli errori. |
 | Ascolto | Streaming richiesto nel formato originale, player, coda, cronologia e scrobbling. I codec dipendono dal dispositivo. |
 | Offline | Download di brani, album e playlist; avanzamento, retry, conteggio e icona evidenziata per i file completati. |
 | Spazio | Numero brani, spazio occupato, filtro album/artista e rimozione delle copie locali. |

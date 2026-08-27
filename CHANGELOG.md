@@ -3,6 +3,14 @@
 Release riservate agli account autorizzati: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
+## Non rilasciato
+
+### Aggiunto
+
+- Creazione di playlist personali direttamente dalla Libreria.
+- Playlist separate tra quelle modificabili dall’account e quelle provenienti dal server o condivise.
+- Aggiunta dei brani limitata alle playlist di cui l’utente collegato è proprietario.
+
 ## 1.3.7 — 2026-08-26 · build 21
 
 ### Aggiunto

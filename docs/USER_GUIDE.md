@@ -17,6 +17,19 @@ Apri un brano o Riproduci tutto su una raccolta. Il mini player riapre player e 
 Lo streaming richiede il formato originale: codec e riproducibilità dipendono da
 file, server e dispositivo. Le radio Internet vengono aperte tramite un'app esterna.
 
+## Playlist
+
+Apri **Libreria → Playlist** e usa **Nuova playlist** per creare una raccolta nel
+tuo account Navidrome. L'app mostra separatamente **Le mie playlist**, modificabili,
+e **Dal server e condivise**, che comprende playlist di altri proprietari, pubbliche
+o importate. Le API Subsonic non indicano la cartella fisica di origine, quindi la
+separazione usa il proprietario restituito dal server.
+
+Dal menu di un brano, **Aggiungi alla playlist** mostra soltanto le playlist del tuo
+account: il protocollo consente di modificare esclusivamente quelle di cui sei
+proprietario. Se il server nega la creazione, verifica che l'utente abbia il ruolo
+playlist nelle autorizzazioni Navidrome.
+
 ## Offline
 
 - Menu brano → **Scarica per ascolto offline**.

@@ -77,6 +77,9 @@ export type Playlist = {
   id: string;
   name: string;
   owner?: string;
+  public?: boolean;
+  created?: string;
+  changed?: string;
   comment?: string;
   songCount?: number;
   duration?: number;
@@ -468,8 +471,17 @@ export class NavidromeClient {
     };
   }
 
-  async createPlaylist(name: string, signal?: AbortSignal): Promise<void> {
-    await this.request('createPlaylist', { name }, signal);
+  async createPlaylist(name: string, signal?: AbortSignal): Promise<Playlist | null> {
+    const payload = await this.request('createPlaylist', { name }, signal);
+    if (!payload.playlist) return null;
+    return {
+      ...payload.playlist,
+      id: String(payload.playlist.id),
+      entry: await this.decorateSongs(payload.playlist.entry ?? []),
+      coverUrl: payload.playlist.coverArt
+        ? await this.coverArtUrl(String(payload.playlist.coverArt), 500)
+        : undefined,
+    };
   }
 
   async addSongToPlaylist(playlistId: string, songId: string, signal?: AbortSignal): Promise<void> {

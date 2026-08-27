@@ -32,6 +32,10 @@ const songs = albums.flatMap((album, albumIndex) =>
     channelCount: 2,
   })),
 );
+const playlists = [
+  { id: 'p1', name: 'Preferiti test', owner: 'demo', public: false, songCount: 4 },
+  { id: 'p2', name: 'Dal server', owner: 'admin', public: true, songCount: 8 },
+];
 
 function envelope(payload = {}) {
   return JSON.stringify({ 'subsonic-response': { status: 'ok', version: '1.16.1', ...payload } });
@@ -92,7 +96,21 @@ const server = http.createServer((request, response) => {
       { value: 'Unknown', albumCount: 20, songCount: 100 },
     ] } }));
   } else if (endpoint === 'getPlaylists') {
-    response.end(envelope({ playlists: { playlist: [{ id: 'p1', name: 'Preferiti test', songCount: 4 }] } }));
+    response.end(envelope({ playlists: { playlist: playlists } }));
+  } else if (endpoint === 'createPlaylist') {
+    const playlist = {
+      id: `p${playlists.length + 1}`,
+      name: url.searchParams.get('name') ?? 'Nuova playlist',
+      owner: url.searchParams.get('u') ?? 'demo',
+      public: false,
+      songCount: 0,
+      duration: 0,
+    };
+    playlists.unshift(playlist);
+    response.end(envelope({ playlist }));
+  } else if (endpoint === 'getPlaylist') {
+    const playlist = playlists.find((item) => item.id === url.searchParams.get('id')) ?? playlists[0];
+    response.end(envelope({ playlist: { ...playlist, entry: [] } }));
   } else if (endpoint === 'search3') {
     response.end(envelope({ searchResult3: { song: url.searchParams.get('songOffset') === '0' ? songs : [] } }));
   } else if (endpoint === 'getInternetRadioStations') {

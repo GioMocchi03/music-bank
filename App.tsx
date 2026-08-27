@@ -73,6 +73,11 @@ import {
   rankDirectSearchItems,
   rankSearchItems,
 } from './src/utils/search';
+import {
+  normalizePlaylistName,
+  partitionPlaylists,
+  validatePlaylistName,
+} from './src/utils/playlists';
 
 type Tab = 'home' | 'library' | 'search' | 'settings';
 type LibraryMode =
@@ -197,6 +202,7 @@ function MusicBankApp() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [actionSong, setActionSong] = useState<Song | null>(null);
   const [playlistPickerOpen, setPlaylistPickerOpen] = useState(false);
+  const [createPlaylistOpen, setCreatePlaylistOpen] = useState(false);
   const [speedOpen, setSpeedOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
   const [clearDownloadsOpen, setClearDownloadsOpen] = useState(false);
@@ -426,6 +432,10 @@ function MusicBankApp() {
         setPlaylistPickerOpen(false);
         return true;
       }
+      if (createPlaylistOpen) {
+        setCreatePlaylistOpen(false);
+        return true;
+      }
       if (actionsOpen) {
         setActionsOpen(false);
         setActionSong(null);
@@ -458,7 +468,7 @@ function MusicBankApp() {
       return false;
     });
     return () => subscription.remove();
-  }, [actionsOpen, clearDownloadsOpen, detail, disconnectOpen, eqOpen, libraryMode, playerOpen, playlistPickerOpen, queueOpen, settingsSection, sleepOpen, speedOpen, tab]);
+  }, [actionsOpen, clearDownloadsOpen, createPlaylistOpen, detail, disconnectOpen, eqOpen, libraryMode, playerOpen, playlistPickerOpen, queueOpen, settingsSection, sleepOpen, speedOpen, tab]);
 
   async function disconnectServer() {
     if (!bootstrapReady || syncInFlightRef.current || disconnectingRef.current || downloadQueueRef.current.busy) return;
@@ -1210,6 +1220,8 @@ function MusicBankApp() {
                   artists={artists}
                   genres={genres}
                   playlists={playlists}
+                  username={authenticatedUsername}
+                  connected={connected}
                   songs={songs}
                   radios={radios}
                   offlineTracks={offlineTracks}
@@ -1221,6 +1233,7 @@ function MusicBankApp() {
                   onPlaylist={(playlist) =>
                     setDetail({ type: 'playlist', id: playlist.id })
                   }
+                  onCreatePlaylist={() => setCreatePlaylistOpen(true)}
                   onSong={(items, index) => void loadSong(items, index)}
                   onMoreSong={(song) => {
                     setActionSong(song);
@@ -1392,6 +1405,7 @@ function MusicBankApp() {
       <PlaylistPickerModal
         visible={playlistPickerOpen}
         playlists={playlists}
+        username={authenticatedUsername}
         onClose={() => setPlaylistPickerOpen(false)}
         onPick={async (playlist) => {
           if (!actionTarget) return;
@@ -1407,6 +1421,34 @@ function MusicBankApp() {
             setMessage(error instanceof Error ? error.message : String(error));
           }
           setPlaylistPickerOpen(false);
+        }}
+      />
+      <CreatePlaylistModal
+        visible={createPlaylistOpen}
+        onClose={() => setCreatePlaylistOpen(false)}
+        onCreate={async (rawName) => {
+          const client = clientRef.current;
+          if (!client || !connected) throw new Error('Collega il server prima di creare una playlist.');
+          const name = normalizePlaylistName(rawName);
+          const created = await client.createPlaylist(name);
+          let updatedPlaylists: Playlist[];
+          try {
+            updatedPlaylists = await client.getPlaylists();
+          } catch (error) {
+            if (!created) throw error;
+            updatedPlaylists = [created, ...playlists.filter((playlist) => playlist.id !== created.id)];
+          }
+          setPlaylists(updatedPlaylists);
+          setMessage(`Playlist “${name}” creata.`);
+          void saveLibrary({
+            albums,
+            artists,
+            genres,
+            playlists: updatedPlaylists,
+            songs,
+            radios,
+            syncedAt: Date.now(),
+          }).catch(() => setMessage(`Playlist “${name}” creata sul server · cache locale da aggiornare.`));
         }}
       />
       <ChoiceModal
@@ -1721,6 +1763,8 @@ function LibraryScreen({
   artists,
   genres,
   playlists,
+  username,
+  connected,
   songs,
   radios,
   offlineTracks,
@@ -1730,6 +1774,7 @@ function LibraryScreen({
   onArtist,
   onGenre,
   onPlaylist,
+  onCreatePlaylist,
   onSong,
   onMoreSong,
 }: {
@@ -1739,6 +1784,8 @@ function LibraryScreen({
   artists: Artist[];
   genres: Genre[];
   playlists: Playlist[];
+  username: string;
+  connected: boolean;
   songs: Song[];
   radios: InternetRadioStation[];
   offlineTracks: OfflineTrack[];
@@ -1748,6 +1795,7 @@ function LibraryScreen({
   onArtist: (artist: Artist) => void;
   onGenre: (genre: Genre) => void;
   onPlaylist: (playlist: Playlist) => void;
+  onCreatePlaylist: () => void;
   onSong: (songs: Song[], index: number) => void;
   onMoreSong: (song: Song) => void;
 }) {
@@ -1778,6 +1826,10 @@ function LibraryScreen({
     }));
     return rankSearchItems(entries, genreQuery, genres.length);
   }, [genreQuery, genres]);
+  const playlistGroups = useMemo(
+    () => partitionPlaylists(playlists, username),
+    [playlists, username],
+  );
   const tiles: Array<[LibraryMode, IconName, string, string]> = [
     ['albums', 'album', 'Album', `${albums.length}`],
     ['artists', 'account-music', 'Artisti album', `${artists.length}`],
@@ -1893,16 +1945,54 @@ function LibraryScreen({
         </View>
       )}
       {mode === 'playlists' && (
-        <View style={styles.list}>
-          {playlists.map((playlist) => (
-            <ListRow
-              key={playlist.id}
-              icon="playlist-music"
-              title={playlist.name}
-              subtitle={`${playlist.songCount ?? 0} brani`}
-              onPress={() => onPlaylist(playlist)}
-            />
-          ))}
+        <View style={styles.playlistPage}>
+          <View style={styles.playlistIntro}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Le tue playlist</Text>
+              <Text style={styles.sectionSubtitle}>Crea raccolte personali e ritrova quelle condivise dal server.</Text>
+            </View>
+            <Pressable
+              disabled={!connected}
+              style={[styles.primaryButton, !connected && styles.buttonDisabled]}
+              onPress={onCreatePlaylist}
+            >
+              <MaterialCommunityIcons name="playlist-plus" size={20} color="#10130B" />
+              <Text style={styles.primaryButtonText}>Nuova playlist</Text>
+            </Pressable>
+          </View>
+
+          <SectionTitle title="Le mie playlist" subtitle={`${playlistGroups.owned.length} modificabili`} />
+          <View style={styles.list}>
+            {playlistGroups.owned.map((playlist) => (
+              <ListRow
+                key={playlist.id}
+                icon="playlist-edit"
+                title={playlist.name}
+                subtitle={`${playlist.songCount ?? 0} brani · ${playlist.public ? 'Condivisa' : 'Personale'}`}
+                onPress={() => onPlaylist(playlist)}
+              />
+            ))}
+            {!playlistGroups.owned.length && (
+              <PlaylistEmptyRow
+                icon="playlist-plus"
+                text={connected ? 'Non hai ancora playlist personali. Creane una con il pulsante qui sopra.' : 'Collega il server per creare playlist personali.'}
+              />
+            )}
+          </View>
+
+          <SectionTitle title="Dal server e condivise" subtitle={`${playlistGroups.server.length} disponibili`} />
+          <View style={styles.list}>
+            {playlistGroups.server.map((playlist) => (
+              <ListRow
+                key={playlist.id}
+                icon="playlist-music"
+                title={playlist.name}
+                subtitle={`${playlist.songCount ?? 0} brani${playlist.owner ? ` · ${playlist.owner}` : ' · Server'}`}
+                onPress={() => onPlaylist(playlist)}
+              />
+            ))}
+            {!playlistGroups.server.length && <PlaylistEmptyRow icon="server" text="Nessuna playlist condivisa o importata dal server." />}
+          </View>
         </View>
       )}
       {mode === 'hub' && !albums.length && <EmptyState icon="cloud-sync-outline" title="Libreria non sincronizzata" text="Apri Impostazioni e avvia la sincronizzazione completa." />}
@@ -3026,6 +3116,15 @@ function ListRow({ icon, title, subtitle, onPress }: { icon: IconName; title: st
   );
 }
 
+function PlaylistEmptyRow({ icon, text }: { icon: IconName; text: string }) {
+  return (
+    <View style={styles.playlistEmptyRow}>
+      <MaterialCommunityIcons name={icon} size={22} color="#777580" />
+      <Text style={styles.playlistEmptyText}>{text}</Text>
+    </View>
+  );
+}
+
 function IconButton({ icon, onPress, active, light, large, small }: { icon: IconName; onPress: () => void; active?: boolean; light?: boolean; large?: boolean; small?: boolean }) {
   return (
     <Pressable style={[styles.iconButton, light && styles.iconButtonLight, small && styles.iconButtonSmall]} onPress={(event) => { event.stopPropagation(); onPress(); }}>
@@ -3105,17 +3204,18 @@ function MoreActionsModal({
   );
 }
 
-function PlaylistPickerModal({ visible, playlists, onClose, onPick }: { visible: boolean; playlists: Playlist[]; onClose: () => void; onPick: (playlist: Playlist) => void }) {
+function PlaylistPickerModal({ visible, playlists, username, onClose, onPick }: { visible: boolean; playlists: Playlist[]; username: string; onClose: () => void; onPick: (playlist: Playlist) => void }) {
   if (!visible) return null;
+  const editablePlaylists = partitionPlaylists(playlists, username).owned;
   return (
     <View style={styles.sheetOverlay}>
       <Pressable style={styles.scrim} onPress={onClose} />
       <SafeAreaView style={styles.sheet} edges={['bottom']}>
         <View style={styles.sheetHandle} />
         <Text style={styles.sheetTitle}>Aggiungi alla playlist</Text>
-        <Text style={styles.sheetSubtitle}>Scegli una playlist Navidrome</Text>
+        <Text style={styles.sheetSubtitle}>Scegli una playlist del tuo account</Text>
         <ScrollView>
-          {playlists.map((playlist) => (
+          {editablePlaylists.map((playlist) => (
             <Pressable key={playlist.id} style={styles.actionRow} onPress={() => onPick(playlist)}>
               <MaterialCommunityIcons name="playlist-music" size={23} color={lime} />
               <View style={{ flex: 1 }}>
@@ -3124,8 +3224,79 @@ function PlaylistPickerModal({ visible, playlists, onClose, onPick }: { visible:
               </View>
             </Pressable>
           ))}
-          {!playlists.length && <EmptyState icon="playlist-remove" title="Nessuna playlist" text="Creane una nell’interfaccia Navidrome, poi sincronizza Music Bank." />}
+          {!editablePlaylists.length && <EmptyState icon="playlist-remove" title="Nessuna playlist personale" text="Apri Libreria → Playlist e creane una nuova." />}
         </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+}
+
+function CreatePlaylistModal({ visible, onClose, onCreate }: { visible: boolean; onClose: () => void; onCreate: (name: string) => Promise<void> }) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setName('');
+      setError('');
+      setBusy(false);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+  const submit = async () => {
+    const validationError = validatePlaylistName(name);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      await onCreate(name);
+      onClose();
+    } catch (creationError) {
+      setError(creationError instanceof Error ? creationError.message : String(creationError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={styles.sheetOverlay}>
+      <Pressable style={styles.scrim} onPress={busy ? undefined : onClose} />
+      <SafeAreaView style={styles.sheet} edges={['bottom']}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>Nuova playlist</Text>
+        <Text style={styles.sheetSubtitle}>Verrà salvata nel tuo account sul server.</Text>
+        <View style={styles.inputWrap}>
+          <MaterialCommunityIcons name="playlist-edit" size={21} color={lime} />
+          <TextInput
+            autoFocus
+            value={name}
+            onChangeText={(value) => {
+              setName(value);
+              if (error) setError('');
+            }}
+            editable={!busy}
+            maxLength={100}
+            placeholder="Nome della playlist"
+            placeholderTextColor="#5D5B66"
+            returnKeyType="done"
+            onSubmitEditing={() => void submit()}
+            style={styles.input}
+          />
+        </View>
+        {!!error && <Text style={styles.playlistError}>{error}</Text>}
+        <Pressable
+          disabled={busy || !normalizePlaylistName(name)}
+          style={[styles.syncButton, (busy || !normalizePlaylistName(name)) && styles.buttonDisabled]}
+          onPress={() => void submit()}
+        >
+          {busy ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="playlist-plus" size={21} color="#10130B" />}
+          <Text style={styles.syncButtonText}>{busy ? 'Creazione…' : 'Crea playlist'}</Text>
+        </Pressable>
       </SafeAreaView>
     </View>
   );
@@ -3319,6 +3490,7 @@ const styles = StyleSheet.create({
   primaryButton: { minHeight: 48, borderRadius: 16, backgroundColor: lime, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 20, alignSelf: 'flex-start' },
   primaryButtonText: { color: '#10130B', fontWeight: '900', fontSize: 13 },
   primaryButtonMobile: { width: '100%', alignSelf: 'stretch' },
+  buttonDisabled: { opacity: 0.4 },
   quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   quickCard: { minWidth: 0, flexGrow: 1, flexBasis: 260, height: 86, padding: 12, borderRadius: 20, backgroundColor: '#15141B', borderWidth: 1, borderColor: '#2A2832', flexDirection: 'row', gap: 12, alignItems: 'center' },
   quickIcon: { width: 60, height: 60, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
@@ -3376,6 +3548,11 @@ const styles = StyleSheet.create({
   emptyText: { color: '#777580', fontSize: 12, textAlign: 'center', marginTop: 7 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   list: { gap: 8 },
+  playlistPage: { gap: 12 },
+  playlistIntro: { minHeight: 88, padding: 18, borderRadius: 20, backgroundColor: '#17161E', borderWidth: 1, borderColor: '#2A2832', flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
+  playlistEmptyRow: { minHeight: 68, paddingHorizontal: 16, borderRadius: 17, borderWidth: 1, borderStyle: 'dashed', borderColor: '#302E38', flexDirection: 'row', alignItems: 'center', gap: 12 },
+  playlistEmptyText: { flex: 1, color: '#777580', fontSize: 11, lineHeight: 17 },
+  playlistError: { color: '#FF7B8B', fontSize: 11, fontWeight: '700', marginTop: 9 },
   listRow: { minHeight: 68, padding: 10, borderRadius: 17, backgroundColor: '#131219', borderWidth: 1, borderColor: '#27252E', flexDirection: 'row', alignItems: 'center', gap: 12 },
   listIcon: { width: 46, height: 46, borderRadius: 13, backgroundColor: '#262238', alignItems: 'center', justifyContent: 'center' },
   detailScroll: { paddingHorizontal: 28, paddingTop: 8, paddingBottom: 150, gap: 22 },
