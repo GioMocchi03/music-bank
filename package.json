@@ -8,28 +8,32 @@
     "type": "git",
     "url": "https://github.com/GioMocchi03/music-bank.git"
   },
-  "bugs": { "url": "https://github.com/GioMocchi03/music-bank/issues" },
+  "bugs": {
+    "url": "https://github.com/GioMocchi03/music-bank/issues"
+  },
   "homepage": "https://github.com/GioMocchi03/music-bank#readme",
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "main": "index.ts",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~57.0.31",
     "expo-asset": "~57.0.8",
-    "expo": "~57.0.9",
-    "expo-audio": "~57.0.3",
-    "expo-blur": "~57.0.2",
-    "expo-crypto": "~57.0.1",
+    "expo-audio": "~57.0.5",
+    "expo-blur": "~57.0.3",
+    "expo-crypto": "~57.0.4",
     "expo-file-system": "~57.0.1",
     "expo-font": "~57.0.1",
-    "expo-linear-gradient": "~57.0.1",
-    "expo-secure-store": "~57.0.1",
+    "expo-linear-gradient": "~57.0.2",
+    "expo-secure-store": "~57.0.4",
     "expo-status-bar": "~57.0.1",
-    "expo-system-ui": "~57.0.2",
+    "expo-system-ui": "~57.0.4",
     "js-md5": "^0.9.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "react-native": "0.86.2",
+    "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-web": "^0.21.2"
   },
