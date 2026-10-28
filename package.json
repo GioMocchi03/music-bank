@@ -19,6 +19,7 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@tauri-apps/api": "^2.12.4",
     "expo": "~57.0.31",
     "expo-asset": "~57.0.8",
     "expo-audio": "~57.0.5",
@@ -38,6 +39,7 @@
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^24.19.0",
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"

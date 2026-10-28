@@ -38,3 +38,6 @@ android/app/build/
 # iOS non e ancora personalizzato. Android contiene invece moduli nativi e
 # Android Auto: deve rimanere versionato.
 /ios
+
+# Tauri build
+/src-tauri/target/
