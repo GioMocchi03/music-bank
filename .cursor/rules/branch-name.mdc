@@ -1,0 +1,12 @@
+---
+description: Chiedere sempre a Matteo e Gio il nome del ramo git prima di crearlo
+alwaysApply: true
+---
+
+# Nome del ramo
+
+Prima di creare un ramo git, chiedere a Matteo come chiamarlo. Non inventare il nome e non riutilizzare un nome scelto in una chat precedente.
+
+Vale anche per un agente nuovo, dopo che il contesto della chat si è riempito. La domanda si fa in quel momento, con il lavoro già chiaro, e si aspetta la risposta prima di `git branch`, `git switch -c` o `git push` di un ramo nuovo.
+
+Se il push su `main` è rifiutato perché servono le pull request, fermarsi e chiedere il nome del ramo. Non pubblicare un nome provvisorio.

@@ -21,6 +21,7 @@ import {
   BackHandler,
   Image,
   Linking,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -44,6 +45,7 @@ import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
+import { nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
   OfflineTrack,
@@ -112,7 +114,6 @@ type Detail =
   | { type: 'genre'; genre: string; sources?: string[] }
   | { type: 'playlist'; id: string }
   | null;
-type RepeatMode = 'none' | 'one' | 'all';
 type GenreView = 'albums' | 'tracks' | 'artists';
 type SearchFilter = 'all' | 'artists' | 'albums' | 'songs';
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -292,8 +293,18 @@ function MusicBankApp() {
   const currentSong = queueIndex >= 0 ? queue[queueIndex] : undefined;
   const actionTarget = actionSong ?? currentSong;
 
-  const playWhenReady = useCallback(() => new Promise<void>((resolve, reject) => {
-    const generation = playbackGenerationRef.current;
+  const queueRef = useRef(queue);
+  const queueIndexRef = useRef(queueIndex);
+  const repeatRef = useRef(repeat);
+  const shuffleRef = useRef(shuffle);
+  const activeSourceKeyRef = useRef(activeSourceKey);
+  queueRef.current = queue;
+  queueIndexRef.current = queueIndex;
+  repeatRef.current = repeat;
+  shuffleRef.current = shuffle;
+  activeSourceKeyRef.current = activeSourceKey;
+
+  const playWhenReady = useCallback((generation: number) => new Promise<void>((resolve, reject) => {
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let subscription: { remove: () => void } | undefined;
@@ -320,16 +331,21 @@ function MusicBankApp() {
       }
     };
 
-    if (player.isLoaded || player.currentStatus.isLoaded) {
-      start();
-      return;
-    }
     subscription = player.addListener('playbackStatusUpdate', (status) => {
+      if (generation !== playbackGenerationRef.current) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          resolve();
+        }
+        return;
+      }
       if (status.isLoaded) start();
     });
-    // Alcuni dispositivi non emettono l'evento di caricamento per gli stream remoti.
-    // Il tentativo finale evita che il tap apra il player lasciandolo in pausa.
-    timeout = setTimeout(start, 4_000);
+    // replace() è già avvenuto: l'isLoaded presente in questo istante è ancora il brano precedente.
+    // Il primo aggiornamento successivo, o un attesa breve, avvia la traccia nuova.
+    // Non si aspetta uno scarico esplicito: su diversi dispositivi non arriva e il salto restava fermo per 4 secondi.
+    timeout = setTimeout(start, 80);
   }), [player, preferences.defaultPlaybackRate]);
 
   useEffect(() => {
@@ -793,11 +809,13 @@ function MusicBankApp() {
         setMessage('Questo brano non è scaricato. Collega il server per ascoltarlo.');
         return;
       }
+      const generation = playbackGenerationRef.current + 1;
+      playbackGenerationRef.current = generation;
       try {
         setQueue(songs);
         setQueueIndex(index);
         const uri = useLocal ? stored!.localUri : await client!.streamUrl(song.id);
-        if (clientRef.current !== client || disconnectingRef.current) return;
+        if (generation !== playbackGenerationRef.current || clientRef.current !== client || disconnectingRef.current) return;
         startedSongRef.current = null;
         player.replace({ uri, name: song.title });
         if (preferences.backgroundPlayback) {
@@ -811,7 +829,7 @@ function MusicBankApp() {
           player.setActiveForLockScreen(false);
         }
         player.loop = repeat === 'one';
-        if (autoPlay) await playWhenReady();
+        if (autoPlay) await playWhenReady(generation);
       } catch (error) {
         setMessage(
           `Riproduzione non riuscita: ${
@@ -852,39 +870,53 @@ function MusicBankApp() {
   }, [player, sleepUntil]);
 
   const playNext = useCallback(() => {
-    if (!queue.length) return;
-    if (repeat === 'one') {
-      void player.seekTo(0).then(() => player.play());
-      return;
-    }
-    let next = shuffle
-      ? Math.floor(Math.random() * queue.length)
-      : queueIndex + 1;
-    if (next >= queue.length) {
-      if (repeat !== 'all') return;
-      next = 0;
-    }
-    void loadSong(queue, next);
-  }, [loadSong, player, queue, queueIndex, repeat, shuffle]);
+    const queued = queueRef.current;
+    const next = nextQueueIndex({
+      length: queued.length,
+      index: queueIndexRef.current,
+      shuffle: shuffleRef.current,
+      repeat: repeatRef.current,
+    });
+    if (next === null) return;
+    void loadSong(queued, next);
+  }, [loadSong]);
 
   const playPrevious = useCallback(() => {
     if (playerStatus.currentTime > 4) {
       void player.seekTo(0);
       return;
     }
-    if (!queue.length) return;
-    const previous = queueIndex > 0 ? queueIndex - 1 : repeat === 'all' ? queue.length - 1 : 0;
-    void loadSong(queue, previous);
-  }, [loadSong, player, playerStatus.currentTime, queue, queueIndex, repeat]);
+    const queued = queueRef.current;
+    if (!queued.length) return;
+    const previous = previousQueueIndex({
+      length: queued.length,
+      index: queueIndexRef.current,
+      repeat: repeatRef.current,
+    });
+    void loadSong(queued, previous);
+  }, [loadSong, player, playerStatus.currentTime]);
 
   useEffect(() => {
-    if (playerStatus.didJustFinish && !finishedRef.current) {
-      finishedRef.current = true;
-      if (currentSong && (!currentSong.offlineSourceKey || currentSong.offlineSourceKey === activeSourceKey)) void clientRef.current?.scrobble(currentSong.id, true);
-      playNext();
-    }
-    if (!playerStatus.didJustFinish) finishedRef.current = false;
-  }, [activeSourceKey, currentSong, playNext, playerStatus.didJustFinish]);
+    const subscription = player.addListener('playbackStatusUpdate', (status) => {
+      if (status.didJustFinish) {
+        if (finishedRef.current) return;
+        finishedRef.current = true;
+        const song = queueRef.current[queueIndexRef.current];
+        const sourceKey = activeSourceKeyRef.current;
+        if (song && (!song.offlineSourceKey || song.offlineSourceKey === sourceKey)) {
+          void clientRef.current?.scrobble(song.id, true);
+        }
+        if (repeatRef.current === 'one') {
+          void player.seekTo(0).then(() => player.play());
+          return;
+        }
+        playNext();
+        return;
+      }
+      if (status.isLoaded && status.currentTime < 1) finishedRef.current = false;
+    });
+    return () => subscription.remove();
+  }, [playNext, player]);
 
   const searchCatalog = useMemo(() => ({
       albums: albums.map((album) => ({
@@ -1019,20 +1051,25 @@ function MusicBankApp() {
     const shouldStar = !song.starred;
     try {
       await client.setStarred(song.id, shouldStar);
+      const starred = shouldStar ? new Date().toISOString() : undefined;
       setQueue((current) =>
         current.map((item) =>
           downloadKey(item, activeSourceKey) === downloadKey(song, activeSourceKey)
-            ? { ...item, starred: shouldStar ? new Date().toISOString() : undefined }
+            ? { ...item, starred }
             : item,
         ),
       );
-      setSongs((current) =>
-        current.map((item) =>
-          item.id === song.id
-            ? { ...item, starred: shouldStar ? new Date().toISOString() : undefined }
-            : item,
-        ),
-      );
+      const nextSongs = songs.map((item) => (item.id === song.id ? { ...item, starred } : item));
+      setSongs(nextSongs);
+      void saveLibrary({
+        albums,
+        artists,
+        genres,
+        playlists,
+        songs: nextSongs,
+        radios,
+        syncedAt: lastFullSyncAtRef.current,
+      }).catch(() => setMessage('Preferito aggiornato sul server · cache locale da aggiornare.'));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1327,7 +1364,7 @@ function MusicBankApp() {
         </View>
       </View>
 
-      {currentSong && tab !== 'settings' && !detailBusy && (
+      {currentSong && tab !== 'settings' && (
         <MiniPlayer
           song={currentSong}
           status={playerStatus}
@@ -1361,7 +1398,9 @@ function MusicBankApp() {
         onToggle={togglePlayback}
         onNext={playNext}
         onPrevious={playPrevious}
-        onSeek={(seconds) => void player.seekTo(seconds)}
+        onSeek={(seconds) => {
+          if (Number.isFinite(seconds)) void player.seekTo(seconds);
+        }}
         onShuffle={() => setShuffle((value) => !value)}
         onRepeat={() => {
           const next = repeat === 'none' ? 'all' : repeat === 'all' ? 'one' : 'none';
@@ -1369,15 +1408,11 @@ function MusicBankApp() {
           player.loop = next === 'one';
         }}
         onQueue={() => setQueueOpen(true)}
-        onEqualizer={() => setEqOpen(true)}
         onMore={() => {
           setActionSong(null);
           setActionsOpen(true);
         }}
-        onBackTen={() => void player.seekTo(Math.max(0, playerStatus.currentTime - 10))}
-        onForwardTen={() => void player.seekTo(Math.min(playerStatus.duration, playerStatus.currentTime + 10))}
         onSpeed={() => setSpeedOpen(true)}
-        onSleep={() => setSleepOpen(true)}
         onFavorite={() => currentSong && void toggleFavorite(currentSong)}
         showAudioDetails={preferences.showAudioDetails}
       />
@@ -1398,6 +1433,10 @@ function MusicBankApp() {
         onClose={() => {
           setActionsOpen(false);
           setActionSong(null);
+        }}
+        onSleep={() => {
+          setActionsOpen(false);
+          setSleepOpen(true);
         }}
         onEqualizer={() => {
           setActionsOpen(false);
@@ -1512,7 +1551,7 @@ function MusicBankApp() {
             playlists: updatedPlaylists,
             songs,
             radios,
-            syncedAt: Date.now(),
+            syncedAt: lastFullSyncAtRef.current,
           }).catch(() => setMessage(`Playlist “${name}” creata sul server · cache locale da aggiornare.`));
         }}
       />
@@ -1535,7 +1574,7 @@ function MusicBankApp() {
           setDetailPlaylist(updatedDetail);
           setPlaylists(updatedPlaylists);
           setMessage(`Playlist “${name}” aggiornata.`);
-          void saveLibrary({ albums, artists, genres, playlists: updatedPlaylists, songs, radios, syncedAt: Date.now() });
+          void saveLibrary({ albums, artists, genres, playlists: updatedPlaylists, songs, radios, syncedAt: lastFullSyncAtRef.current });
         }}
         onDelete={async () => {
           const client = clientRef.current;
@@ -1553,7 +1592,7 @@ function MusicBankApp() {
           setDetailPlaylist(null);
           setDetail(null);
           setMessage(`Playlist “${playlist.name}” eliminata.`);
-          void saveLibrary({ albums, artists, genres, playlists: updatedPlaylists, songs, radios, syncedAt: Date.now() });
+          void saveLibrary({ albums, artists, genres, playlists: updatedPlaylists, songs, radios, syncedAt: lastFullSyncAtRef.current });
         }}
       />
       <ChoiceModal
@@ -2829,6 +2868,25 @@ function Field({ label, icon, value, onChange, secure }: { label: string; icon: 
   );
 }
 
+function collectionIdentity<T>(items: T[]): string {
+  let key = String(items.length);
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (item && typeof item === 'object') {
+      if ('id' in item && (item as { id?: unknown }).id != null) {
+        key += `\0${String((item as { id: unknown }).id)}`;
+      } else if ('value' in item && (item as { value?: unknown }).value != null) {
+        key += `\0${String((item as { value: unknown }).value)}`;
+      } else {
+        key += `\0${JSON.stringify(item)}`;
+      }
+    } else {
+      key += `\0${String(item)}`;
+    }
+  }
+  return key;
+}
+
 function CollectionPager<T>({
   items,
   pageSize,
@@ -2844,10 +2902,11 @@ function CollectionPager<T>({
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
   const offset = safePage * pageSize;
+  const identity = collectionIdentity(items);
 
   useEffect(() => {
     setPage(0);
-  }, [items, pageSize]);
+  }, [identity, pageSize]);
 
   return (
     <View style={styles.pagedCollection}>
@@ -2977,9 +3036,13 @@ function CollectionDownloadAction({ songs, kind }: { songs: Song[]; kind: 'album
 function OfflineDownloads({ onSong, onMoreSong }: { onSong: (songs: Song[], index: number) => void; onMoreSong: (song: Song) => void }) {
   const { tracks, jobs, onDownload } = useContext(OfflineContext);
   const [albumFilter, setAlbumFilter] = useState('');
-  const saved = [...tracks.values()];
-  const query = normalizeSearchText(albumFilter);
-  const songs = saved.filter((entry) => normalizeSearchText(`${entry.song.album ?? ''} ${entry.song.artist ?? ''}`).includes(query)).map((entry) => entry.song);
+  const saved = useMemo(() => [...tracks.values()], [tracks]);
+  const songs = useMemo(() => {
+    const query = normalizeSearchText(albumFilter);
+    return saved
+      .filter((entry) => normalizeSearchText(`${entry.song.album ?? ''} ${entry.song.artist ?? ''}`).includes(query))
+      .map((entry) => entry.song);
+  }, [albumFilter, saved]);
   return (
     <>
       <SectionTitle title="Download" subtitle={`${saved.length} brani · ${formatDownloadSize(saved.reduce((total, track) => total + (track.size ?? 0), 0))} sul dispositivo`} />
@@ -3043,27 +3106,32 @@ function MiniPlayer({ song, status, compact, bottom, onOpen, onToggle, onNext }:
       {status.isBuffering && <ActivityIndicator size="small" color={lime} />}
       <DownloadIndicator song={song} />
       <IconButton icon={status.playing ? 'pause' : 'play'} onPress={onToggle} light />
-      {!compact && <IconButton icon="skip-next" onPress={onNext} />}
+      <IconButton icon="skip-next" onPress={onNext} />
       <View style={[styles.miniProgress, { width: `${progress}%` }]} />
     </Pressable>
   );
 }
 
-function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showAudioDetails, onClose, onToggle, onNext, onPrevious, onSeek, onShuffle, onRepeat, onQueue, onEqualizer, onFavorite, onMore, onBackTen, onForwardTen, onSpeed, onSleep }: { visible: boolean; song?: Song; status: ReturnType<typeof useAudioPlayerStatus>; shuffle: boolean; repeat: RepeatMode; bottomInset: number; showAudioDetails: boolean; onClose: () => void; onToggle: () => void; onNext: () => void; onPrevious: () => void; onSeek: (seconds: number) => void; onShuffle: () => void; onRepeat: () => void; onQueue: () => void; onEqualizer: () => void; onFavorite: () => void; onMore: () => void; onBackTen: () => void; onForwardTen: () => void; onSpeed: () => void; onSleep: () => void }) {
+function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showAudioDetails, onClose, onToggle, onNext, onPrevious, onSeek, onShuffle, onRepeat, onFavorite, onQueue, onMore, onSpeed }: { visible: boolean; song?: Song; status: ReturnType<typeof useAudioPlayerStatus>; shuffle: boolean; repeat: RepeatMode; bottomInset: number; showAudioDetails: boolean; onClose: () => void; onToggle: () => void; onNext: () => void; onPrevious: () => void; onSeek: (seconds: number) => void; onShuffle: () => void; onRepeat: () => void; onFavorite: () => void; onQueue: () => void; onMore: () => void; onSpeed: () => void }) {
   if (!song || !visible) return null;
   const playbackRate = status.playbackRate || 1;
   return (
       <SafeAreaView style={[styles.playerModal, styles.fullOverlay]} edges={['top', 'left', 'right']}>
         <LinearGradient colors={['#33245F', '#11121B', '#08090D']} style={StyleSheet.absoluteFill} />
         <View style={styles.modalHeader}>
-          <IconButton icon="chevron-down" onPress={onClose} />
-          <View style={{ alignItems: 'center' }}>
+          <View style={styles.headerSide}>
+            <IconButton icon="chevron-down" onPress={onClose} />
+          </View>
+          <View style={styles.playerHeading}>
             <Text style={styles.playerEyebrow}>IN RIPRODUZIONE</Text>
             <Text numberOfLines={1} style={styles.playerAlbum}>{song.album}</Text>
           </View>
-          <IconButton icon="dots-horizontal" onPress={onMore} />
+          <View style={[styles.headerSide, styles.headerActions]}>
+            <IconButton icon="playlist-music" label="Coda di riproduzione" onPress={onQueue} />
+            <IconButton icon="dots-horizontal" label="Più azioni" onPress={onMore} />
+          </View>
         </View>
-        <View style={styles.playerBody}>
+        <View style={[styles.playerBody, { paddingBottom: bottomInset + 12 }]}>
           <Artwork uri={song.coverUrl} title={song.title} player />
           <View style={styles.nowCopy}>
             <View style={{ flex: 1 }}>
@@ -3099,23 +3167,16 @@ function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showA
           )}
           <View style={styles.transport}>
             <IconButton icon="shuffle-variant" onPress={onShuffle} active={shuffle} />
-            <IconButton icon="rewind-10" onPress={onBackTen} large />
-            <Pressable style={styles.bigPlay} onPress={onToggle}>
-              {status.isBuffering ? <ActivityIndicator color="#10130B" /> : <MaterialCommunityIcons name={status.playing ? 'pause' : 'play'} size={38} color="#10130B" />}
+            <Pressable accessibilityRole="button" accessibilityLabel="Precedente" style={styles.skipButton} onPress={onPrevious}>
+              <MaterialCommunityIcons name="skip-previous" size={48} color="#ECEBF1" />
             </Pressable>
-            <IconButton icon="fast-forward-10" onPress={onForwardTen} large />
+            <Pressable accessibilityRole="button" accessibilityLabel={status.playing ? 'Pausa' : 'Play'} style={styles.bigPlay} onPress={onToggle}>
+              {status.isBuffering ? <ActivityIndicator color="#10130B" /> : <MaterialCommunityIcons name={status.playing ? 'pause' : 'play'} size={50} color="#10130B" />}
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Successivo" style={styles.skipButton} onPress={onNext}>
+              <MaterialCommunityIcons name="skip-next" size={48} color="#ECEBF1" />
+            </Pressable>
             <IconButton icon={repeat === 'one' ? 'repeat-once' : 'repeat'} onPress={onRepeat} active={repeat !== 'none'} />
-          </View>
-          <View style={styles.secondaryTransport}>
-            <ToolButton icon="skip-previous" label="Precedente" onPress={onPrevious} />
-            <ToolButton icon="speedometer" label="Velocità" onPress={onSpeed} />
-            <ToolButton icon="skip-next" label="Successivo" onPress={onNext} />
-          </View>
-          <View style={[styles.playerTools, { paddingBottom: bottomInset + 12 }]}>
-            <ToolButton icon="playlist-music" label="Coda" onPress={onQueue} />
-            <ToolButton icon="tune-variant" label="Equalizzatore" onPress={onEqualizer} />
-            <ToolButton icon="timer-sand" label="Timer" onPress={onSleep} />
-            <ToolButton icon="dots-horizontal" label="Più azioni" onPress={onMore} />
           </View>
         </View>
       </SafeAreaView>
@@ -3124,14 +3185,36 @@ function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showA
 
 function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; value: number; duration: number; onSeek: (seconds: number) => void }) {
   const [width, setWidth] = useState(0);
+  const widthRef = useRef(0);
+  const hostRef = useRef<View>(null);
+  const durationRef = useRef(duration);
+  const onSeekRef = useRef(onSeek);
+  durationRef.current = duration;
+  onSeekRef.current = onSeek;
   const bars = useMemo(() => createWaveform(songId, 84), [songId]);
-  const progress = duration > 0 ? Math.max(0, Math.min(1, value / duration)) : 0;
+  const progress = Number.isFinite(duration) && duration > 0 ? Math.max(0, Math.min(1, value / duration)) : 0;
   const seekFromPosition = (locationX: number) => {
-    if (width <= 0 || duration <= 0) return;
-    onSeek(Math.max(0, Math.min(duration, (locationX / width) * duration)));
+    const trackWidth = widthRef.current;
+    const trackDuration = durationRef.current;
+    if (trackWidth <= 0 || !Number.isFinite(locationX) || !Number.isFinite(trackDuration) || trackDuration <= 0) return;
+    const seconds = Math.max(0, Math.min(trackDuration, (locationX / trackWidth) * trackDuration));
+    if (Number.isFinite(seconds)) onSeekRef.current(seconds);
   };
+  const seekFromPageX = (pageX: number) => {
+    hostRef.current?.measureInWindow((x, _y, measuredWidth) => {
+      if (!Number.isFinite(x) || !Number.isFinite(pageX)) return;
+      if (measuredWidth > 0) widthRef.current = measuredWidth;
+      seekFromPosition(pageX - x);
+    });
+  };
+  const seekPan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (event) => seekFromPageX(event.nativeEvent.pageX),
+    onPanResponderMove: (event) => seekFromPageX(event.nativeEvent.pageX),
+  }), []);
   const waveformBars = (color: string) => (
-    <View style={styles.waveformBars}>
+    <View pointerEvents="none" style={styles.waveformBars}>
       {bars.map((height, index) => (
         <View key={`${songId}-${index}`} style={[styles.waveformBar, { height, backgroundColor: color }]} />
       ))}
@@ -3139,18 +3222,24 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
   );
 
   return (
-    <Pressable
+    <View
       accessibilityRole="adjustable"
       accessibilityLabel="Posizione del brano"
       accessibilityValue={{
         min: 0,
-        max: Math.round(duration),
-        now: Math.round(value),
+        max: Math.round(Number.isFinite(duration) ? duration : 0),
+        now: Math.round(Number.isFinite(value) ? value : 0),
         text: `${formatTime(value)} di ${formatTime(duration)}`,
       }}
+      pointerEvents="box-only"
+      ref={hostRef}
       style={styles.waveform}
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      onPress={(event) => seekFromPosition(event.nativeEvent.locationX)}
+      onLayout={(event) => {
+        const nextWidth = event.nativeEvent.layout.width;
+        widthRef.current = nextWidth;
+        setWidth(nextWidth);
+      }}
+      {...seekPan.panHandlers}
     >
       {waveformBars('#4A4753')}
       <View pointerEvents="none" style={[styles.waveformPlayed, { width: `${progress * 100}%` }]}>
@@ -3159,22 +3248,49 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
         </View>
       </View>
       <View pointerEvents="none" style={[styles.waveformCursor, { left: `${progress * 100}%` }]} />
-    </Pressable>
+    </View>
   );
 }
 
 function QueueModal({ visible, queue, currentIndex, onClose, onPick }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void }) {
+  const listRef = useRef<ScrollView>(null);
+  const offsetRef = useRef(0);
+  const grantOffsetRef = useRef(0);
+  const draggedRef = useRef(false);
+  const scrollPan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onMoveShouldSetPanResponderCapture: (_, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onPanResponderGrant: () => {
+      draggedRef.current = false;
+      grantOffsetRef.current = offsetRef.current;
+    },
+    onPanResponderMove: (_, gesture) => {
+      if (Math.abs(gesture.dy) > 8) draggedRef.current = true;
+      listRef.current?.scrollTo({ y: Math.max(0, grantOffsetRef.current - gesture.dy), animated: false });
+    },
+    onPanResponderRelease: () => {
+      setTimeout(() => { draggedRef.current = false; }, 0);
+    },
+    onPanResponderTerminate: () => { draggedRef.current = false; },
+  }), []);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
       <Pressable style={styles.scrim} onPress={onClose} />
-      <SafeAreaView style={styles.sheet} edges={['bottom']}>
+      <SafeAreaView style={[styles.sheet, styles.queueSheet]} edges={['bottom']}>
         <View style={styles.sheetHandle} />
         <Text style={styles.sheetTitle}>Coda di riproduzione</Text>
         <Text style={styles.sheetSubtitle}>{queue.length} brani</Text>
-        <ScrollView>
+        <ScrollView
+          ref={listRef}
+          style={styles.queueList}
+          scrollEventThrottle={16}
+          onScroll={(event) => { offsetRef.current = event.nativeEvent.contentOffset.y; }}
+          {...scrollPan.panHandlers}
+        >
           {queue.map((song, index) => (
-            <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === currentIndex && styles.queueRowOn]} onPress={() => onPick(index)}>
+            <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === currentIndex && styles.queueRowOn]} onPress={() => { if (!draggedRef.current) onPick(index); }}>
               <MaterialCommunityIcons name={index === currentIndex ? 'volume-high' : 'drag'} size={20} color={index === currentIndex ? lime : '#686671'} />
               <View style={{ flex: 1 }}>
                 <Text numberOfLines={1} style={[styles.trackTitle, index === currentIndex && { color: lime }]}>{song.title}</Text>
@@ -3300,9 +3416,9 @@ function PlaylistEmptyRow({ icon, text }: { icon: IconName; text: string }) {
   );
 }
 
-function IconButton({ icon, onPress, active, light, large, small }: { icon: IconName; onPress: () => void; active?: boolean; light?: boolean; large?: boolean; small?: boolean }) {
+function IconButton({ icon, onPress, active, light, large, small, label }: { icon: IconName; onPress: () => void; active?: boolean; light?: boolean; large?: boolean; small?: boolean; label?: string }) {
   return (
-    <Pressable style={[styles.iconButton, light && styles.iconButtonLight, small && styles.iconButtonSmall]} onPress={(event) => { event.stopPropagation(); onPress(); }}>
+    <Pressable accessibilityRole="button" accessibilityLabel={label} style={[styles.iconButton, light && styles.iconButtonLight, small && styles.iconButtonSmall]} onPress={(event) => { event.stopPropagation(); onPress(); }}>
       <MaterialCommunityIcons name={icon} size={large ? 34 : small ? 19 : 24} color={light ? '#10130B' : active ? lime : '#ECEBF1'} />
     </Pressable>
   );
@@ -3312,6 +3428,7 @@ function MoreActionsModal({
   visible,
   song,
   onClose,
+  onSleep,
   onEqualizer,
   onSmartQueue,
   onMix,
@@ -3327,6 +3444,7 @@ function MoreActionsModal({
   visible: boolean;
   song?: Song;
   onClose: () => void;
+  onSleep: () => void;
   onEqualizer: () => void;
   onSmartQueue: () => void;
   onMix: () => void;
@@ -3346,6 +3464,7 @@ function MoreActionsModal({
   const job = jobs[key];
   const serverActionsEnabled = songBelongsToSource(song, sourceKey);
   const actions: Array<[IconName, string, () => void, boolean?]> = [
+    ['timer-sand', 'Timer di riproduzione', onSleep],
     ['playlist-play', 'Smart flow · Smart queue', onSmartQueue, !serverActionsEnabled],
     ['creation', 'Mix istantaneo', onMix, !serverActionsEnabled],
     ['tune-variant', 'Equalizzatore · DSP', onEqualizer],
@@ -3629,15 +3748,6 @@ function ChoiceModal({ visible, title, description, options, onClose, onPick }: 
         ))}
       </SafeAreaView>
     </View>
-  );
-}
-
-function ToolButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
-  return (
-    <Pressable style={styles.toolButton} onPress={onPress}>
-      <MaterialCommunityIcons name={icon} size={24} color="#D6D4DD" />
-      <Text style={styles.toolText}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -3932,6 +4042,9 @@ const styles = StyleSheet.create({
   playerModal: { flex: 1, backgroundColor: '#090A0E' },
   fullOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 100 },
   modalHeader: { minHeight: 70, paddingHorizontal: 17, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerSide: { width: 96, flexDirection: 'row', alignItems: 'center' },
+  headerActions: { justifyContent: 'flex-end', gap: 8 },
+  playerHeading: { flex: 1, alignItems: 'center' },
   playerEyebrow: { color: '#8C8995', fontSize: 9, fontWeight: '800', letterSpacing: 1.5 },
   playerAlbum: { color: '#E8E6ED', fontSize: 11, fontWeight: '700', marginTop: 3, maxWidth: 220 },
   playerBody: { flex: 1, width: '100%', maxWidth: 620, alignSelf: 'center', paddingHorizontal: 28, justifyContent: 'space-evenly' },
@@ -3940,7 +4053,7 @@ const styles = StyleSheet.create({
   nowTitle: { color: '#F7F6F9', fontWeight: '900', fontSize: 23 },
   nowArtist: { color: '#9996A1', fontSize: 14, marginTop: 5 },
   seek: { width: '100%', height: 36 },
-  waveform: { width: '100%', height: 58, position: 'relative', justifyContent: 'center', overflow: 'hidden' },
+  waveform: { width: '100%', height: 58, position: 'relative', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' },
   waveformBars: { width: '100%', height: '100%', flexDirection: 'row', alignItems: 'center', gap: 1.5 },
   waveformBar: { flex: 1, minWidth: 1, borderRadius: 2 },
   waveformPlayed: { position: 'absolute', left: 0, top: 0, bottom: 0, overflow: 'hidden' },
@@ -3952,7 +4065,8 @@ const styles = StyleSheet.create({
   audioInfoRow: { minHeight: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 8 },
   audioInfoText: { flexShrink: 1, color: '#85828E', fontSize: 10, textAlign: 'center' },
   transport: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  bigPlay: { width: 72, height: 72, borderRadius: 36, backgroundColor: lime, alignItems: 'center', justifyContent: 'center' },
+  bigPlay: { width: 96, height: 96, borderRadius: 48, backgroundColor: lime, alignItems: 'center', justifyContent: 'center' },
+  skipButton: { width: 80, height: 80, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(28,27,36,.86)', borderWidth: 1, borderColor: '#302E39' },
   playerTools: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: '#25232D', paddingTop: 16 },
   secondaryTransport: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
   toolButton: { alignItems: 'center', gap: 5, minWidth: 75 },
@@ -3960,6 +4074,8 @@ const styles = StyleSheet.create({
   scrim: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 0, backgroundColor: 'rgba(0,0,0,.7)' },
   sheetOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 120 },
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 1, maxHeight: '78%', backgroundColor: '#121118', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 14 },
+  queueSheet: { height: '72%' },
+  queueList: { flex: 1, cursor: 'pointer' },
   sheetHandle: { width: 45, height: 4, borderRadius: 2, backgroundColor: '#4C4A55', alignSelf: 'center', marginBottom: 20 },
   sheetTitle: { color: '#F4F3F7', fontWeight: '900', fontSize: 21 },
   sheetSubtitle: { color: '#777580', fontSize: 10, marginTop: 4, marginBottom: 14 },
