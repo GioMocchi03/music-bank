@@ -2875,10 +2875,10 @@ function collectionIdentity<T>(items: T[]): string {
     if (item && typeof item === 'object') {
       if ('id' in item && (item as { id?: unknown }).id != null) {
         key += `\0${String((item as { id: unknown }).id)}`;
-      } else if ('value' in item) {
+      } else if ('value' in item && (item as { value?: unknown }).value != null) {
         key += `\0${String((item as { value: unknown }).value)}`;
       } else {
-        key += `\0${index}`;
+        key += `\0${JSON.stringify(item)}`;
       }
     } else {
       key += `\0${String(item)}`;
