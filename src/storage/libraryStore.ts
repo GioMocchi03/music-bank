@@ -20,6 +20,58 @@ const MANIFEST_FILE = 'manifest.json';
 const METADATA_FILE = 'metadata.json';
 const SONG_CHUNK_SIZE = 500;
 
+// IndexedDB per la cache web e Windows (WebView2).
+const WEB_DB_NAME = 'music-bank-library';
+const WEB_DB_STORE = 'snapshots';
+
+function openWebDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(WEB_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(WEB_DB_STORE)) {
+        db.createObjectStore(WEB_DB_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('Database libreria bloccato.'));
+  });
+}
+
+async function webDatabaseOperation<T>(
+  mode: IDBTransactionMode,
+  operation: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  const db = await openWebDatabase();
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const transaction = db.transaction(WEB_DB_STORE, mode);
+      const request = operation(transaction.objectStore(WEB_DB_STORE));
+      let result: T;
+      request.onsuccess = () => { result = request.result; };
+      transaction.oncomplete = () => resolve(result);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function saveWebLibrary(value: string): Promise<IDBValidKey> {
+  return webDatabaseOperation('readwrite', store => store.put(value, WEB_KEY));
+}
+
+function readWebLibrary(): Promise<string | undefined> {
+  return webDatabaseOperation('readonly', store => store.get(WEB_KEY));
+}
+
+function clearWebLibrary(): Promise<undefined> {
+  return webDatabaseOperation('readwrite', store => store.delete(WEB_KEY));
+}
+
+
 export type LibrarySnapshot = {
   albums: Album[];
   artists: Artist[];
@@ -181,10 +233,13 @@ export async function saveLibrary(
   onProgress?: (savedSongs: number, totalSongs: number) => void,
 ): Promise<void> {
   if (Platform.OS === 'web') {
-    await AsyncStorage.setItem(WEB_KEY, JSON.stringify({
+    await saveWebLibrary(JSON.stringify({
       ...snapshot,
       songs: snapshot.songs.map(stripSongCover),
     }));
+    try {
+      await AsyncStorage.multiRemove([WEB_KEY, LEGACY_KEY]);
+    } catch {}
     return;
   }
 
@@ -289,8 +344,12 @@ export async function saveLibrary(
 }
 
 export async function clearLibrary(): Promise<void> {
+  if (Platform.OS === 'web') {
+    await clearWebLibrary();
+    await AsyncStorage.multiRemove([WEB_KEY, LEGACY_KEY]);
+    return;
+  }
   await AsyncStorage.multiRemove([WEB_KEY, LEGACY_KEY]);
-  if (Platform.OS === 'web') return;
   const legacyFile = new File(Paths.document, LEGACY_FILE_NAME);
   if (legacyFile.exists) legacyFile.delete();
   const root = new Directory(Paths.document, ROOT_DIRECTORY);
@@ -300,9 +359,16 @@ export async function clearLibrary(): Promise<void> {
 export async function loadLibrary(): Promise<LibrarySnapshot | null> {
   if (Platform.OS === 'web') {
     try {
-      const value = await AsyncStorage.getItem(WEB_KEY)
+      const indexedValue = await readWebLibrary();
+      if (indexedValue) return parseLibrary(indexedValue);
+      const legacyValue = await AsyncStorage.getItem(WEB_KEY)
         ?? await AsyncStorage.getItem(LEGACY_KEY);
-      return value ? parseLibrary(value) : null;
+      if (!legacyValue) return null;
+      const snapshot = parseLibrary(legacyValue);
+      try {
+        await saveLibrary(snapshot);
+      } catch {}
+      return snapshot;
     } catch {
       return null;
     }
