@@ -7,7 +7,8 @@ node_modules
 android/.gradle
 android/app/build
 design/*preview.png
-tools
+tools/*
+!tools/patch-expo-audio.mjs
 *.log
 *.tsbuildinfo
 credentials.json
