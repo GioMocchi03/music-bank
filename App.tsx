@@ -51,6 +51,7 @@ import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/s
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, nextQueueIndex, previousQueueIndex, removeQueueItem, removedQueueIndex, type RepeatMode } from './src/player/queue';
 import { equalizerLevelAfterDrag } from './src/player/equalizer';
+import { configureWebEqualizer } from './src/player/webEqualizer';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
   OfflineTrack,
@@ -310,6 +311,7 @@ function MusicBankApp() {
   const player = useAudioPlayer(null, {
     updateInterval: 750,
     keepAudioSessionActive: true,
+    crossOrigin: Platform.OS === 'web' ? 'anonymous' : undefined,
   });
   const playerStatus = useAudioPlayerStatus(player);
   const audioSessionId = Number((player as unknown as { audioSessionId?: number }).audioSessionId ?? 0);
@@ -1527,6 +1529,8 @@ function MusicBankApp() {
         visible={eqOpen}
         onClose={() => setEqOpen(false)}
         sessionId={audioSessionId}
+        player={player}
+        trackKey={`${currentSong?.id ?? ''}:${playerStatus.isLoaded ? 'ready' : 'loading'}`}
       />
       <MoreActionsModal
         visible={actionsOpen}
@@ -3486,7 +3490,7 @@ function SwipeRightAction({ onAction, children }: { onAction: () => void; childr
   );
 }
 
-function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onClose: () => void; sessionId: number }) {
+function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { visible: boolean; onClose: () => void; sessionId: number; player: unknown; trackKey: string }) {
   const [enabled, setEnabled] = useState(false);
   const [levels, setLevels] = useState([0, 0, 0, 0, 0]);
   const [frequencies, setFrequencies] = useState([60, 230, 910, 3600, 14000]);
@@ -3515,11 +3519,12 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
   }, [sessionId]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || sessionId <= 0 || !GioConnectionStore) return;
-    const applied = GioConnectionStore.configureEqualizer(sessionId, enabled, levels);
+    const applied = Platform.OS === 'android'
+      ? sessionId > 0 && !!GioConnectionStore && GioConnectionStore.configureEqualizer(sessionId, enabled, levels)
+      : Platform.OS === 'web' && configureWebEqualizer(player, enabled, levels, frequencies);
     setNotice(applied ? '' : 'Equalizzatore non applicabile alla sessione audio.');
     void AsyncStorage.setItem(EQUALIZER_STORAGE_KEY, JSON.stringify({ enabled, levels }));
-  }, [enabled, levels, sessionId]);
+  }, [enabled, frequencies, levels, player, sessionId, trackKey]);
 
   if (!visible) return null;
   return (
@@ -3530,7 +3535,7 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
         <View style={styles.eqHeader}>
           <View style={{ flex: 1 }}>
             <Text style={styles.sheetTitle}>Equalizzatore</Text>
-            <Text style={styles.sheetSubtitle}>{Platform.OS === 'android' ? 'Equalizzatore integrato nella riproduzione' : 'Non disponibile su questa piattaforma'}</Text>
+            <Text style={styles.sheetSubtitle}>{Platform.OS === 'android' ? 'Equalizzatore integrato nella riproduzione' : 'Equalizzatore Web Audio integrato nella riproduzione'}</Text>
           </View>
           <Pressable accessibilityRole="switch" accessibilityState={{ checked: enabled }} style={[styles.switch, enabled && styles.switchOn]} onPress={() => setEnabled((value) => !value)}>
             <View style={[styles.switchThumb, enabled && styles.switchThumbOn]} />
@@ -3543,11 +3548,11 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
             <Text style={styles.trackSubtitle}>format=raw · maxBitRate=0 · volume digitale 100%</Text>
           </View>
         </View>
-        {Platform.OS === 'android' ? (
+        {Platform.OS === 'android' || Platform.OS === 'web' ? (
           <>
             <View style={styles.eqBands}>
               {frequencies.map((frequency, index) => (
-                <EqualizerBand key={`${frequency}-${index}`} frequency={frequency} value={levels[index] ?? 0} min={range.min} max={range.max} disabled={!enabled || sessionId <= 0} onChange={(value) => setLevels((current) => current.map((item, itemIndex) => itemIndex === index ? value : item))} />
+                <EqualizerBand key={`${frequency}-${index}`} frequency={frequency} value={levels[index] ?? 0} min={range.min} max={range.max} disabled={!enabled || (Platform.OS === 'android' && sessionId <= 0)} onChange={(value) => setLevels((current) => current.map((item, itemIndex) => itemIndex === index ? value : item))} />
               ))}
             </View>
             <Pressable style={styles.eqReset} onPress={() => setLevels(frequencies.map(() => 0))}>
