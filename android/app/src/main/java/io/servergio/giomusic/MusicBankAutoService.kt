@@ -268,11 +268,12 @@ class MusicBankAutoService : MediaLibraryService() {
       if (needle.isBlank()) return emptyList()
       return searchCache.getOrPut(needle) {
         // Bound the legacy Binder response, including short queries matching thousands
-        // of tracks. Return actual artists/albums as well as playable songs.
+        // of tracks. Return navigable artists, albums and genres as well as playable songs.
         searchAutoIndex(searchIndex, needle, { item ->
           when {
             item.mediaId.startsWith("artist:") -> 0
             item.mediaId.startsWith("album:") -> 1
+            item.mediaId.startsWith("genre:") -> 1
             else -> 2
           }
         })
@@ -369,7 +370,7 @@ class MusicBankAutoService : MediaLibraryService() {
       // Search the original entities, never synthetic browse sections. Normalize once
       // per catalogue refresh rather than repeatedly scanning/allocating on each query.
       searchIndex = itemIndex.values.filter {
-        it.mediaId.startsWith("song:") || it.mediaId.startsWith("album:") || it.mediaId.startsWith("artist:")
+        it.mediaId.startsWith("song:") || it.mediaId.startsWith("album:") || it.mediaId.startsWith("artist:") || it.mediaId.startsWith("genre:")
       }.map { item ->
         item to listOfNotNull(item.mediaMetadata.title, item.mediaMetadata.artist,
           item.mediaMetadata.albumTitle, item.mediaMetadata.genre).map { normalizeAutoQuery(it.toString()) }

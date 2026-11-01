@@ -27,10 +27,10 @@ class AutoBrowseSearchTest {
   }
   @Test fun shortQueryIsBoundedWithoutHidingArtistAndAlbumHits() {
     val index = (0 until 10000).map { "song:$it" to listOf("dm") } +
-      listOf("artist:dm" to listOf("dm"), "album:dm" to listOf("dm"))
+      listOf("artist:dm" to listOf("dm"), "album:dm" to listOf("dm"), "genre:dm" to listOf("dm"))
     val result = searchAutoIndex(index, "dm") { if (it.startsWith("song:")) 2 else 0 }
     assertEquals(80, result.size)
-    assertEquals(listOf("artist:dm", "album:dm"), result.take(2))
+    assertEquals(listOf("artist:dm", "album:dm", "genre:dm"), result.take(3))
     assertTrue(searchAutoIndex(index, "") { 0 }.isEmpty())
     assertTrue(searchAutoIndex(index, "absent") { 0 }.isEmpty())
   }
