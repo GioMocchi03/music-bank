@@ -2,6 +2,7 @@ package io.servergio.giomusic
 
 import android.net.Uri
 import android.os.FileObserver
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.Player
@@ -20,7 +21,6 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
 import java.io.File
-import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -110,7 +110,10 @@ class MusicBankAutoService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<MediaItem>> {
       catalogue.reloadIfChanged()
-      return Futures.immediateFuture(LibraryResult.ofItem(catalogue.root, params))
+      return Futures.immediateFuture(LibraryResult.ofItem(catalogue.root, LibraryParams.Builder()
+        .setExtras(Bundle().apply {
+          putBoolean("android.media.browse.SEARCH_SUPPORTED", true)
+        }).build()))
     }
 
     override fun onGetChildren(
@@ -151,7 +154,12 @@ class MusicBankAutoService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<Void>> {
       catalogue.reloadIfChanged()
-      session.notifySearchResultChanged(browser, query, catalogue.search(query).size, params)
+      // Complete the command before delivering the result event. Legacy Auto browsers
+      // bridge this event to their pending MediaBrowserCompat search request.
+      val count = catalogue.search(query).size
+      Handler(Looper.getMainLooper()).post {
+        session.notifySearchResultChanged(browser, query, count, params)
+      }
       return Futures.immediateFuture(LibraryResult.ofVoid(params))
     }
 
@@ -212,12 +220,17 @@ class MusicBankAutoService : MediaLibraryService() {
     }
   }
 
-  private class AutoCatalogue {
+  internal class AutoCatalogue {
     private var sourceFile: File? = null
     private var lastModified = Long.MIN_VALUE
     private var songs = emptyList<AutoSong>()
+    private var metadata: JSONObject? = null
     private var itemsById = emptyMap<String, MediaItem>()
     private var childrenById = emptyMap<String, List<MediaItem>>()
+    private var searchIndex = emptyList<Pair<MediaItem, List<String>>>()
+    private val searchCache = object : LinkedHashMap<String, List<MediaItem>>(16, 0.75f, true) {
+      override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MediaItem>>): Boolean = size > 16
+    }
 
     val root: MediaItem
       get() = browsable(ROOT_ID, "Music Bank")
@@ -252,29 +265,44 @@ class MusicBankAutoService : MediaLibraryService() {
       itemsById[mediaId]?.takeIf { it.mediaMetadata.isPlayable == true }
 
     fun search(query: String): List<MediaItem> {
-      val needle = normalize(query)
+      val needle = normalizeAutoQuery(query)
       if (needle.isBlank()) return emptyList()
-      return songs.asSequence()
-        .map { song -> song to searchScore(song, needle) }
-        .filter { (_, score) -> score < Int.MAX_VALUE }
-        .sortedBy { (_, score) -> score }
-        .mapNotNull { (song) -> itemsById[song.mediaId] }
-        .toList()
+      return searchCache.getOrPut(needle) {
+        // Bound the legacy Binder response, including short queries matching thousands
+        // of tracks. Return navigable artists, albums and genres as well as playable songs.
+        searchAutoIndex(searchIndex, needle, { item ->
+          when {
+            item.mediaId.startsWith("artist:") -> 0
+            item.mediaId.startsWith("album:") -> 1
+            item.mediaId.startsWith("genre:") -> 1
+            else -> 2
+          }
+        })
+      }
     }
 
     private fun readFile() {
       val file = sourceFile ?: return
       val modified = if (file.exists()) file.lastModified() else -1L
       val parsed = try {
-        if (!file.exists()) emptyList() else parseSongs(file.readText())
+        if (!file.exists()) null to emptyList() else {
+          val document = JSONObject(file.readText())
+          val entities = JSONObject().apply {
+            listOf("albums", "artists", "genres").forEach { key ->
+              document.optJSONArray(key)?.let { put(key, it) }
+            }
+          }
+          entities to parseSongs(document)
+        }
       } catch (_: Exception) { return }
-      songs = parsed
+      metadata = parsed.first
+      songs = parsed.second
       lastModified = modified
       rebuildIndex()
     }
 
-    private fun parseSongs(json: String): List<AutoSong> {
-      val array = JSONObject(json).getJSONArray("songs")
+    private fun parseSongs(json: JSONObject): List<AutoSong> {
+      val array = json.getJSONArray("songs")
       return buildList {
         for (index in 0 until array.length()) {
           val value = array.optJSONObject(index) ?: continue
@@ -294,6 +322,7 @@ class MusicBankAutoService : MediaLibraryService() {
               discNumber = value.optInt("discNumber", 0),
               durationSeconds = value.optLong("duration", 0L),
               genre = value.cleanString("genre"),
+              starred = value.cleanString("starred") != null,
               artworkUrl = value.cleanString("coverUrl"),
               streamUrl = streamUrl,
             ),
@@ -349,17 +378,70 @@ class MusicBankAutoService : MediaLibraryService() {
           .map { "album:${Uri.encode(albumKey(it))}" }.distinct().mapNotNull { itemIndex[it] }
           .sortedBy { it.mediaMetadata.title.toString().lowercase(Locale.ITALIAN) }
       }
-      // Legacy Auto browsers do not necessarily request later pages. Expose bounded folders.
+      // Use the exact phone metadata (including canonical genre aliases), retaining
+      // the song-derived fallback for catalogues written by older app versions.
+      val metadataAlbums = metadata?.optJSONArray("albums")
+      val albumsByArtist = (0 until (metadataAlbums?.length() ?: 0)).mapNotNull { index ->
+        val album = metadataAlbums!!.optJSONObject(index) ?: return@mapNotNull null
+        val artist = album.cleanString("artistId") ?: return@mapNotNull null
+        val id = album.cleanString("id") ?: return@mapNotNull null
+        artist to id
+      }.groupBy({ it.first }, { it.second })
+      fun metadataFolders(arrayName: String, parentId: String, prefix: String, nameKey: String) {
+        val array = metadata?.optJSONArray(arrayName) ?: return
+        val folders = (0 until array.length()).mapNotNull { index ->
+          val value = array.optJSONObject(index) ?: return@mapNotNull null
+          val name = value.cleanString(nameKey) ?: return@mapNotNull null
+          val key = value.cleanString("id") ?: name
+          val id = "$prefix:${Uri.encode(key)}"
+          val original = childIndex[id].orEmpty()
+          val entries = if (prefix == "genre") {
+            val sources = value.optJSONArray("sourceValues")
+            val names = (0 until (sources?.length() ?: 0)).map { sources!!.getString(it) }.toSet() + name
+            songs.filter { it.genre in names }.mapNotNull { itemIndex[it.mediaId] }
+          } else if (prefix == "artist") {
+            (original + albumsByArtist[key].orEmpty().mapNotNull { itemIndex["album:${Uri.encode(it)}"] })
+              .distinctBy { it.mediaId }
+          } else original
+          childIndex[id] = entries
+          val artwork = value.cleanString("coverUrl") ?: value.cleanString("artistImageUrl")
+            ?: itemIndex[id]?.mediaMetadata?.artworkUri?.toString()
+            ?: entries.firstOrNull()?.mediaMetadata?.artworkUri?.toString()
+          browsable(id, name, artwork).also { itemIndex[id] = it }
+        }.sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
+        childIndex[parentId] = folders
+      }
+      metadataFolders("albums", ALBUMS_ID, "album", "name")
+      metadataFolders("artists", ARTISTS_ID, "artist", "name")
+      metadataFolders("genres", GENRES_ID, "genre", "value")
+      itemIndex[FAVORITES_ID] = browsable(FAVORITES_ID, "Preferiti")
+      childIndex[FAVORITES_ID] = songs.filter { it.starred }.mapNotNull { itemIndex[it.mediaId] }
+        .sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
+      val searchableIds = listOf(ALBUMS_ID, ARTISTS_ID, GENRES_ID, TRACKS_ID)
+        .flatMap { childIndex[it].orEmpty() }.map { it.mediaId }.toSet()
+      // Search the original entities, never synthetic browse sections. Normalize once
+      // per catalogue refresh rather than repeatedly scanning/allocating on each query.
+      searchIndex = itemIndex.values.filter {
+        it.mediaId in searchableIds
+      }.map { item ->
+        item to listOfNotNull(item.mediaMetadata.title, item.mediaMetadata.artist,
+          item.mediaMetadata.albumTitle, item.mediaMetadata.genre).map { normalizeAutoQuery(it.toString()) }
+      }
+      searchCache.clear()
+      // Legacy Auto does not necessarily request subsequent API pages. Keep every
+      // entity accessible through named alphabetical sections instead of numeric pages.
       childIndex.toMap().forEach { (parent, children) ->
         if (children.size > 100) {
-          val pages = children.chunked(100).mapIndexed { index, chunk ->
-            val id = "page:$parent:$index"
-            childIndex[id] = chunk
-            browsable(id, "${index * 100 + 1}–${index * 100 + chunk.size}").also { itemIndex[id] = it }
+          val sections = browseSections(children) { it.mediaMetadata.title.toString() }
+          childIndex[parent] = sections.mapIndexed { index, section ->
+            val id = "section:$parent:$index"
+            childIndex[id] = section.items
+            browsable(id, section.title).also { itemIndex[id] = it }
           }
-          childIndex[parent] = pages
         }
       }
+      // Keep four root tabs; favorites remain a prominent entry inside Brani.
+      childIndex[TRACKS_ID] = listOf(itemIndex.getValue(FAVORITES_ID)) + childIndex[TRACKS_ID].orEmpty()
       itemsById = itemIndex
       childrenById = childIndex
     }
@@ -428,24 +510,7 @@ class MusicBankAutoService : MediaLibraryService() {
       return optString(key).trim().takeIf { it.isNotBlank() && it != "null" }
     }
 
-    private fun searchScore(song: AutoSong, query: String): Int {
-      val fields = listOf(song.title, song.artist, song.album, song.genre)
-        .mapNotNull { it?.let(::normalize) }
-      if (fields.any { it == query }) return 0
-      if (fields.any { it.startsWith(query) }) return 1
-      if (fields.any { it.contains(query) }) return 2
-      val compactQuery = query.replace(" ", "")
-      if (fields.any { it.replace(" ", "").contains(compactQuery) }) return 3
-      return Int.MAX_VALUE
-    }
 
-    private fun normalize(value: String): String {
-      return Normalizer.normalize(value, Normalizer.Form.NFD)
-        .replace("\\p{Mn}+".toRegex(), "")
-        .lowercase(Locale.ITALIAN)
-        .replace("[^\\p{L}\\p{N}]+".toRegex(), " ")
-        .trim()
-    }
   }
 
   private data class AutoSong(
@@ -459,6 +524,7 @@ class MusicBankAutoService : MediaLibraryService() {
     val discNumber: Int,
     val durationSeconds: Long,
     val genre: String?,
+    val starred: Boolean,
     val artworkUrl: String?,
     val streamUrl: String,
   ) {
@@ -472,6 +538,7 @@ class MusicBankAutoService : MediaLibraryService() {
     private const val ARTISTS_ID = "music-bank-artists"
     private const val GENRES_ID = "music-bank-genres"
     private const val TRACKS_ID = "music-bank-tracks"
+    private const val FAVORITES_ID = "music-bank-favorites"
     fun currentAudioSessionId(): Int = activeService?.player?.audioSessionId ?: 0
     private var activeService: MusicBankAutoService? = null
     fun refreshCatalogue() { activeService?.refresh() }
