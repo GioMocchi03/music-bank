@@ -2,6 +2,7 @@ import { NativeModules, Platform } from 'react-native';
 
 export type AndroidAutoPlaybackState = {
   sampledAt: number;
+  audioSessionId: number;
   mediaId: string | null;
   positionMs: number;
   durationMs: number;
@@ -45,6 +46,6 @@ export async function refreshAndroidAutoCatalog(): Promise<void> {
   if (Platform.OS === 'android') await requireBridge().refreshCatalog();
 }
 
-export function editAndroidAutoQueue(operation: 'move' | 'remove' | 'append', index = 0, target = 0, item?: AutoQueueItem): Promise<boolean> {
+export function editAndroidAutoQueue(operation: 'move' | 'remove' | 'append' | 'next' | 'keepCurrent', index = 0, target = 0, item?: AutoQueueItem): Promise<boolean> {
   return requireBridge().editQueue(operation, index, target, JSON.stringify(item ?? {}));
 }

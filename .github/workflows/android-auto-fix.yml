@@ -1,7 +1,7 @@
 name: Android Auto verification
 on:
   push:
-    branches: [fix/android-auto-sync]
+    branches: [fix/android-auto-sync, fix/restore-phone-controls]
   workflow_dispatch:
 permissions:
   contents: read

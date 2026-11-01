@@ -1,4 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import GioConnectionStore from './modules/gio-equalizer/src/GioConnectionStoreModule';
+import { isQueueSwipe, queueDropIndex } from './src/player/gestures';
+import { equalizerLevelAfterDrag } from './src/player/equalizer';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   setAudioModeAsync,
@@ -8,6 +12,8 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import {
   createContext,
+  cloneElement,
+  isValidElement,
   useContext,
   useCallback,
   useEffect,
@@ -47,7 +53,7 @@ import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
-import { moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
+import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
   OfflineTrack,
@@ -121,6 +127,9 @@ type SearchFilter = 'all' | 'artists' | 'albums' | 'songs';
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
 const lime = '#D6FF4B';
+const QueueActionsContext = createContext<{ onAdd: (song: Song) => void }>({ onAdd: () => {} });
+const EQUALIZER_STORAGE_KEY = 'music_bank_equalizer_v1';
+
 const OfflineContext = createContext<{
   tracks: Map<string, OfflineTrack>;
   jobs: Record<string, DownloadJob>;
@@ -310,6 +319,7 @@ function MusicBankApp() {
     setShuffle(autoState.shuffle);
     setRepeat(autoState.repeatMode === 1 ? 'one' : autoState.repeatMode === 2 ? 'all' : 'none');
   }, [autoState, songs]);
+  const audioSessionId = autoState?.audioSessionId ?? 0;
   const currentSong = queueIndex >= 0 ? queue[queueIndex] : undefined;
   const actionTarget = actionSong ?? currentSong;
 
@@ -1086,6 +1096,35 @@ function MusicBankApp() {
     else player.play();
   }
 
+  async function enqueueSong(song: Song, next: boolean) {
+    try {
+      if (usesAndroidAutoPlayer) {
+        const stored = offlineByKey.get(downloadKey(song, activeSourceKey));
+        const local = stored && (!!song.offlineSourceKey || !clientRef.current || !connected || preferences.preferOffline);
+        if (!local && (!clientRef.current || !songBelongsToSource(song, activeSourceKey))) throw new Error('Collega il server di questo brano.');
+        const uri = local ? stored.localUri : await clientRef.current!.streamUrl(song.id);
+        nativeKnownSongsRef.current.set(song.id, song);
+        await editAndroidAutoQueue(next ? 'next' : 'append', 0, 0, { ...song, uri });
+      } else if (!queueRef.current.length) {
+        await loadSong([song], 0, false);
+      } else {
+        setQueue((items) => next ? insertNextInQueue(items, queueIndexRef.current, song) : appendToQueue(items, song));
+      }
+      setMessage(next ? `${song.title} verrà riprodotto subito dopo.` : `${song.title} aggiunto alla coda.`);
+    } catch (error) { setMessage(String(error)); }
+  }
+
+  function clearQueue() {
+    if (usesAndroidAutoPlayer) {
+      void editAndroidAutoQueue('keepCurrent').then(() => setMessage('Coda svuotata · il brano corrente continua.')).catch((error) => setMessage(String(error)));
+      return;
+    }
+    const playingSong = queueRef.current[queueIndexRef.current];
+    setQueue(playingSong ? [playingSong] : []);
+    setQueueIndex(playingSong ? 0 : -1);
+    setMessage('Coda svuotata · il brano corrente continua.');
+  }
+
   async function toggleFavorite(song: Song) {
     const client = clientRef.current;
     if (!client || !songBelongsToSource(song, activeSourceKey)) {
@@ -1190,6 +1229,7 @@ function MusicBankApp() {
       : detailAlbum?.name ?? detailArtist?.name ?? detailPlaylist?.name ?? '';
 
   return (
+    <QueueActionsContext.Provider value={{ onAdd: (song) => { void enqueueSong(song, false); } }}>
     <OfflineContext.Provider value={{ tracks: offlineByKey, jobs: downloadJobs, sourceKey: activeSourceKey,
       onDownload: requestDownload, onDownloadMany: (items) => items.forEach((song) => requestDownload(song, false)) }}>
     <SafeAreaView style={styles.app} edges={['top', 'left', 'right']}>
@@ -1470,7 +1510,8 @@ function MusicBankApp() {
         currentIndex={queueIndex}
         onClose={() => setQueueOpen(false)}
         onPick={(index) => void loadSong(queue, index)}
-        onMove={(from, to) => {
+        onClear={clearQueue}
+        onReorder={(from, to) => {
           if (usesAndroidAutoPlayer) void editAndroidAutoQueue('move', from, to).catch((error) => setMessage(String(error)));
           else { setQueue(moveQueueItem(queue, from, to)); setQueueIndex(movedQueueIndex(queueIndex, from, to)); }
         }}
@@ -1486,6 +1527,7 @@ function MusicBankApp() {
         }}
       />
       <EqualizerModal
+        sessionId={audioSessionId}
         visible={eqOpen}
         onClose={() => setEqOpen(false)}
       />
@@ -1504,22 +1546,12 @@ function MusicBankApp() {
           setActionsOpen(false);
           setEqOpen(true);
         }}
-        onAppendQueue={async () => {
-          if (!actionTarget) return;
-          try {
-            if (usesAndroidAutoPlayer) {
-              const stored = offlineByKey.get(downloadKey(actionTarget, activeSourceKey));
-              const local = stored && (!!actionTarget.offlineSourceKey || !clientRef.current || !connected || preferences.preferOffline);
-              if (!local && (!clientRef.current || !songBelongsToSource(actionTarget, activeSourceKey))) throw new Error('Collega il server di questo brano.');
-              const uri = local ? stored.localUri : await clientRef.current!.streamUrl(actionTarget.id);
-              nativeKnownSongsRef.current.set(actionTarget.id, actionTarget);
-              await editAndroidAutoQueue('append', 0, 0, { ...actionTarget, uri });
-              // Include a newly queued song even if it came from remote search.
-              setQueue((current) => [...current, actionTarget]);
-            } else if (!queue.length) await loadSong([actionTarget], 0, false);
-            else setQueue((current) => [...current, actionTarget]);
-            setMessage('Brano aggiunto alla coda.');
-          } catch (error) { setMessage(String(error)); }
+        onAppendQueue={() => {
+          if (actionTarget) void enqueueSong(actionTarget, false);
+          setActionsOpen(false);
+        }}
+        onPlayNext={() => {
+          if (actionTarget) void enqueueSong(actionTarget, true);
           setActionsOpen(false);
         }}
         onSmartQueue={async () => {
@@ -1746,6 +1778,7 @@ function MusicBankApp() {
       />
     </SafeAreaView>
     </OfflineContext.Provider>
+    </QueueActionsContext.Provider>
   );
 }
 
@@ -3145,10 +3178,12 @@ function OfflineDownloads({ onSong, onMoreSong }: { onSong: (songs: Song[], inde
 }
 
 function TrackList({ songs, onPlay, onMore }: { songs: Song[]; onPlay: (index: number) => void; onMore?: (song: Song) => void }) {
+  const { onAdd } = useContext(QueueActionsContext);
   return (
     <View style={styles.trackList}>
       {songs.map((song, index) => (
-        <Pressable key={`${song.id}-${index}`} style={styles.trackRow} onPress={() => onPlay(index)}>
+        <SwipeRightAction key={`${song.id}-${index}`} onAction={() => onAdd(song)}>
+        <Pressable style={styles.trackRow} onPress={() => onPlay(index)}>
           <Text style={styles.trackNumber}>{song.track ?? index + 1}</Text>
           <Artwork uri={song.coverUrl} title={song.title} size={46} />
           <View style={styles.trackCopy}>
@@ -3169,6 +3204,7 @@ function TrackList({ songs, onPlay, onMore }: { songs: Song[]; onPlay: (index: n
             <MaterialCommunityIcons name="dots-vertical" size={20} color="#A09EAA" />
           </Pressable>
         </Pressable>
+        </SwipeRightAction>
       ))}
     </View>
   );
@@ -3332,62 +3368,45 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
   );
 }
 
-function QueueModal({ visible, queue, currentIndex, onClose, onPick, onMove, onRemove }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onMove: (from: number, to: number) => void; onRemove: (index: number) => void }) {
+function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
   const listRef = useRef<ScrollView>(null);
-  const offsetRef = useRef(0);
-  const grantOffsetRef = useRef(0);
-  const draggedRef = useRef(false);
-  const scrollPan = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-    onMoveShouldSetPanResponderCapture: (_, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-    onPanResponderGrant: () => {
-      draggedRef.current = false;
-      grantOffsetRef.current = offsetRef.current;
-    },
-    onPanResponderMove: (_, gesture) => {
-      if (Math.abs(gesture.dy) > 8) draggedRef.current = true;
-      listRef.current?.scrollTo({ y: Math.max(0, grantOffsetRef.current - gesture.dy), animated: false });
-    },
-    onPanResponderRelease: () => {
-      setTimeout(() => { draggedRef.current = false; }, 0);
-    },
-    onPanResponderTerminate: () => { draggedRef.current = false; },
-  }), []);
+  const [dragTarget, setDragTarget] = useState<number | null>(null);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
       <Pressable style={styles.scrim} onPress={onClose} />
       <SafeAreaView style={[styles.sheet, styles.queueSheet]} edges={['bottom']}>
         <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle}>Coda di riproduzione</Text>
-        <Text style={styles.sheetSubtitle}>{queue.length} brani</Text>
+        <View style={styles.queueHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sheetTitle}>Coda di riproduzione</Text>
+            <Text style={styles.sheetSubtitle}>{queue.length} brani</Text>
+          </View>
+          {!!queue.length && (
+            <Pressable accessibilityRole="button" style={styles.queueClearButton} onPress={onClear}>
+              <MaterialCommunityIcons name="playlist-remove" size={19} color="#FF8B8B" />
+              <Text style={styles.queueClearText}>Svuota</Text>
+            </Pressable>
+          )}
+        </View>
         <ScrollView
           ref={listRef}
           style={styles.queueList}
-          scrollEventThrottle={16}
-          onScroll={(event) => { offsetRef.current = event.nativeEvent.contentOffset.y; }}
-          {...scrollPan.panHandlers}
+          scrollEnabled={dragTarget === null}
         >
           {queue.map((song, index) => (
-            <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === currentIndex && styles.queueRowOn]} onPress={() => { if (!draggedRef.current) onPick(index); }}>
-              <MaterialCommunityIcons name={index === currentIndex ? 'volume-high' : 'drag'} size={20} color={index === currentIndex ? lime : '#686671'} />
-              <View style={{ flex: 1 }}>
-                <Text numberOfLines={1} style={[styles.trackTitle, index === currentIndex && { color: lime }]}>{song.title}</Text>
-                <Text numberOfLines={1} style={styles.trackSubtitle}>{song.artist}</Text>
-              </View>
-              <Text style={styles.trackDuration}>{formatTime(song.duration ?? 0)}</Text>
-              <DownloadIndicator song={song} />
-              <Pressable accessibilityLabel="Sposta prima" disabled={index === 0} onPress={(event) => { event.stopPropagation(); onMove(index, index - 1); }} style={{ padding: 8 }}>
-                <MaterialCommunityIcons name="arrow-up" size={22} color={index === 0 ? '#555' : lime} />
-              </Pressable>
-              <Pressable accessibilityLabel="Sposta dopo" disabled={index === queue.length - 1} onPress={(event) => { event.stopPropagation(); onMove(index, index + 1); }} style={{ padding: 8 }}>
-                <MaterialCommunityIcons name="arrow-down" size={22} color={index === queue.length - 1 ? '#555' : lime} />
-              </Pressable>
-              <Pressable accessibilityLabel="Rimuovi dalla coda" onPress={(event) => { event.stopPropagation(); onRemove(index); }} style={{ padding: 8 }}>
-                <MaterialCommunityIcons name="close" size={22} color="#aaa" />
-              </Pressable>
-            </Pressable>
+            <QueueRow
+              key={`${song.id}-${index}`}
+              song={song}
+              index={index}
+              count={queue.length}
+              current={index === currentIndex}
+              target={index === dragTarget}
+              onPick={onPick}
+              onDragTarget={setDragTarget}
+              onReorder={onReorder}
+              onRemove={onRemove}
+            />
           ))}
         </ScrollView>
       </SafeAreaView>
@@ -3395,7 +3414,125 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onMove, onR
   );
 }
 
-function EqualizerModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (index: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
+  const targetRef = useRef(index);
+  const handlers = useRef({ index, count, onDragTarget, onReorder });
+  handlers.current = { index, count, onDragTarget, onReorder };
+  const origin = useRef({ index, count });
+  const dragPan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      origin.current = { index: handlers.current.index, count: handlers.current.count };
+      targetRef.current = origin.current.index;
+      handlers.current.onDragTarget(origin.current.index);
+    },
+    onPanResponderMove: (_, gesture) => {
+      const targetIndex = queueDropIndex(origin.current.index, origin.current.count, gesture.dy);
+      if (targetRef.current !== targetIndex) {
+        targetRef.current = targetIndex;
+        handlers.current.onDragTarget(targetIndex);
+      }
+    },
+    onPanResponderRelease: () => {
+      const targetIndex = targetRef.current;
+      handlers.current.onDragTarget(null);
+      if (targetIndex !== origin.current.index) handlers.current.onReorder(origin.current.index, targetIndex);
+    },
+    onPanResponderTerminate: () => handlers.current.onDragTarget(null),
+    onPanResponderTerminationRequest: () => false,
+  }), []);
+  return (
+    <SwipeRightAction onAction={() => onRemove(index)}>
+    <Pressable style={[styles.queueRow, current && styles.queueRowOn, target && styles.queueRowTarget]} onPress={() => onPick(index)}>
+      <View accessibilityRole="button" accessibilityLabel={`Trascina ${song.title}`} style={styles.queueDragHandle} {...dragPan.panHandlers}>
+        <MaterialCommunityIcons name={current ? 'volume-high' : 'drag'} size={20} color={current ? lime : '#86838F'} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={[styles.trackTitle, current && { color: lime }]}>{song.title}</Text>
+        <Text numberOfLines={1} style={styles.trackSubtitle}>{song.artist}</Text>
+      </View>
+      <Text style={styles.trackDuration}>{formatTime(song.duration ?? 0)}</Text>
+      <DownloadIndicator song={song} />
+    </Pressable>
+    </SwipeRightAction>
+  );
+}
+
+function SwipeRightAction({ onAction, children }: { onAction: () => void; children: React.ReactNode }) {
+  const [offset, setOffset] = useState(0);
+  const swipedRef = useRef(false);
+  const actionRef = useRef(onAction);
+  actionRef.current = onAction;
+  const pan = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => gesture.dx > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onMoveShouldSetPanResponderCapture: (_, gesture) => gesture.dx > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderMove: (_, gesture) => {
+      if (gesture.dx > 12) swipedRef.current = true;
+      setOffset(Math.max(0, Math.min(24, gesture.dx * 0.16)));
+    },
+    onPanResponderRelease: (_, gesture) => {
+      setOffset(0);
+      if (isQueueSwipe(gesture.dx, gesture.dy)) actionRef.current();
+      setTimeout(() => { swipedRef.current = false; }, 120);
+    },
+    onPanResponderTerminate: () => {
+      setOffset(0);
+      setTimeout(() => { swipedRef.current = false; }, 120);
+    },
+    onPanResponderTerminationRequest: () => false,
+  }), []);
+  const child = isValidElement<{ onPress?: (...args: unknown[]) => void }>(children)
+    ? cloneElement(children, {
+        onPress: (...args: unknown[]) => {
+          if (!swipedRef.current) children.props.onPress?.(...args);
+        },
+      })
+    : children;
+  return (
+    <View style={styles.swipeHost} {...pan.panHandlers}>
+      <View style={{ transform: [{ translateX: offset }] }}>{child}</View>
+    </View>
+  );
+}
+
+function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onClose: () => void; sessionId: number }) {
+  const [enabled, setEnabled] = useState(false);
+  const [levels, setLevels] = useState([0, 0, 0, 0, 0]);
+  const [frequencies, setFrequencies] = useState([60, 230, 910, 3600, 14000]);
+  const [range, setRange] = useState({ min: -1500, max: 1500 });
+  const [notice, setNotice] = useState('');
+  const [settingsReady, setSettingsReady] = useState(false);
+
+  useEffect(() => {
+    void AsyncStorage.getItem(EQUALIZER_STORAGE_KEY).then((saved) => {
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as { enabled?: boolean; levels?: number[] };
+      setEnabled(!!parsed.enabled);
+      if (Array.isArray(parsed.levels) && parsed.levels.length) setLevels(parsed.levels);
+    }).catch(() => setNotice('Impostazioni equalizzatore non ripristinate.')).finally(() => setSettingsReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || sessionId <= 0 || !GioConnectionStore) return;
+    const info = GioConnectionStore.getEqualizerInfo(sessionId);
+    if (!info) {
+      setNotice('Equalizzatore non disponibile su questo dispositivo.');
+      return;
+    }
+    setFrequencies(info.frequencies);
+    setRange({ min: info.minLevel, max: info.maxLevel });
+    setLevels((current) => info.frequencies.map((_, index) => current[index] ?? 0));
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || sessionId <= 0 || !GioConnectionStore) return;
+    if (!settingsReady) return;
+    const applied = GioConnectionStore.configureEqualizer(sessionId, enabled, levels);
+    setNotice(applied ? '' : 'Equalizzatore non applicabile alla sessione audio.');
+    void AsyncStorage.setItem(EQUALIZER_STORAGE_KEY, JSON.stringify({ enabled, levels }));
+  }, [enabled, levels, sessionId, settingsReady]);
+
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
@@ -3404,10 +3541,12 @@ function EqualizerModal({ visible, onClose }: { visible: boolean; onClose: () =>
         <View style={styles.sheetHandle} />
         <View style={styles.eqHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.sheetTitle}>Audio puro</Text>
-            <Text style={styles.sheetSubtitle}>Il DSP interno è disabilitato in modo permanente</Text>
+            <Text style={styles.sheetTitle}>Equalizzatore</Text>
+            <Text style={styles.sheetSubtitle}>{Platform.OS === 'android' ? 'Equalizzatore integrato nella riproduzione' : 'Non disponibile su questa piattaforma'}</Text>
           </View>
-          <MaterialCommunityIcons name="shield-check-outline" size={34} color={lime} />
+          <Pressable accessibilityRole="switch" accessibilityState={{ checked: enabled }} style={[styles.switch, enabled && styles.switchOn]} onPress={() => setEnabled((value) => !value)}>
+            <View style={[styles.switchThumb, enabled && styles.switchThumbOn]} />
+          </Pressable>
         </View>
         <View style={styles.qualityCard}>
           <MaterialCommunityIcons name="waveform" size={30} color={lime} />
@@ -3416,8 +3555,49 @@ function EqualizerModal({ visible, onClose }: { visible: boolean; onClose: () =>
             <Text style={styles.trackSubtitle}>format=raw · maxBitRate=0 · volume digitale 100%</Text>
           </View>
         </View>
-        <Text style={styles.eqNotice}>Audio originale · DSP completamente disattivato</Text>
+        {Platform.OS === 'android' ? (
+          <>
+            <View style={styles.eqBands}>
+              {frequencies.map((frequency, index) => (
+                <EqualizerBand key={`${frequency}-${index}`} frequency={frequency} value={levels[index] ?? 0} min={range.min} max={range.max} disabled={!enabled || sessionId <= 0} onChange={(value) => setLevels((current) => current.map((item, itemIndex) => itemIndex === index ? value : item))} />
+              ))}
+            </View>
+            <Pressable style={styles.eqReset} onPress={() => setLevels(frequencies.map(() => 0))}>
+              <Text style={styles.eqResetText}>Ripristina bande</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text style={styles.eqNotice}>L'equalizzatore integrato è disponibile nella build Android.</Text>
+        )}
+        {!!notice && <Text style={styles.eqNotice}>{notice}</Text>}
       </SafeAreaView>
+    </View>
+  );
+}
+
+function EqualizerBand({ frequency, value, min, max, disabled, onChange }: { frequency: number; value: number; min: number; max: number; disabled: boolean; onChange: (value: number) => void }) {
+  const height = 190;
+  const startValueRef = useRef(value);
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => !disabled,
+    onStartShouldSetPanResponderCapture: () => !disabled,
+    onMoveShouldSetPanResponder: (_, gesture) => !disabled && Math.abs(gesture.dy) > 2,
+    onMoveShouldSetPanResponderCapture: (_, gesture) => !disabled && Math.abs(gesture.dy) > 2,
+    onPanResponderGrant: () => { startValueRef.current = value; },
+    onPanResponderMove: (_, gesture) => {
+      onChange(equalizerLevelAfterDrag(startValueRef.current, gesture.dy, height, min, max));
+    },
+    onPanResponderTerminationRequest: () => false,
+  }), [disabled, max, min, onChange, value]);
+  const ratio = max === min ? 0.5 : (value - min) / (max - min);
+  return (
+    <View style={[styles.eqBand, disabled && { opacity: 0.4 }]} {...pan.panHandlers}>
+      <Text style={styles.eqValue}>{value >= 0 ? '+' : ''}{(value / 100).toFixed(1)} dB</Text>
+      <View pointerEvents="none" style={styles.eqRail}>
+        <View style={[styles.eqFill, { height: `${Math.max(0, Math.min(1, ratio)) * 100}%` }]} />
+        <View style={[styles.eqThumb, { bottom: `${Math.max(0, Math.min(1, ratio)) * 100}%` }]} />
+      </View>
+      <Text style={styles.eqLabel}>{frequency >= 1000 ? `${(frequency / 1000).toFixed(frequency >= 10000 ? 0 : 1)}k` : frequency} Hz</Text>
     </View>
   );
 }
@@ -3520,6 +3700,7 @@ function MoreActionsModal({
   onSleep,
   onEqualizer,
   onAppendQueue,
+  onPlayNext,
   onSmartQueue,
   onMix,
   onAddPlaylist,
@@ -3537,6 +3718,7 @@ function MoreActionsModal({
   onSleep: () => void;
   onEqualizer: () => void;
   onAppendQueue: () => void;
+  onPlayNext: () => void;
   onSmartQueue: () => void;
   onMix: () => void;
   onAddPlaylist: () => void;
@@ -3556,6 +3738,7 @@ function MoreActionsModal({
   const serverActionsEnabled = songBelongsToSource(song, sourceKey);
   const actions: Array<[IconName, string, () => void, boolean?]> = [
     ['playlist-plus', 'Aggiungi alla coda', onAppendQueue],
+    ['skip-next', 'Riproduci subito dopo', onPlayNext],
     ['timer-sand', 'Timer di riproduzione', onSleep],
     ['playlist-play', 'Smart flow · Smart queue', onSmartQueue, !serverActionsEnabled],
     ['creation', 'Mix istantaneo', onMix, !serverActionsEnabled],
@@ -3959,6 +4142,18 @@ function formatSamplingRate(rate: number): string {
 }
 
 const styles = StyleSheet.create({
+  eqResetText: { color: '#D7D5DD', fontSize: 11, fontWeight: '800' },
+  eqReset: { alignSelf: 'center', minHeight: 42, borderRadius: 13, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1A1921', borderWidth: 1, borderColor: '#302E39' },
+  eqThumb: { position: 'absolute', left: 2, width: 30, height: 8, marginBottom: -4, borderRadius: 4, backgroundColor: lime, borderWidth: 1, borderColor: '#F4FFD0' },
+  eqFill: { width: '100%', borderRadius: 17, backgroundColor: '#788E31' },
+  eqRail: { width: 34, height: 190, borderRadius: 17, backgroundColor: '#25232D', overflow: 'visible', justifyContent: 'flex-end' },
+  eqBands: { minHeight: 245, marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 8 },
+  swipeHost: { position: 'relative', overflow: 'hidden', borderRadius: 13 },
+  queueDragHandle: { width: 34, height: 46, alignItems: 'center', justifyContent: 'center' },
+  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime },
+  queueClearText: { color: '#FF9A9A', fontSize: 11, fontWeight: '900' },
+  queueClearButton: { minHeight: 40, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#25191D', borderWidth: 1, borderColor: '#4A272F' },
+  queueHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   app: { flex: 1, backgroundColor: '#07080C' },
   shell: { flex: 1, flexDirection: 'row' },
   content: { flex: 1, minWidth: 0 },
@@ -4183,7 +4378,7 @@ const styles = StyleSheet.create({
   switchOn: { backgroundColor: lime },
   switchThumb: { width: 21, height: 21, borderRadius: 11, backgroundColor: '#F2F1F5' },
   switchThumbOn: { marginLeft: 21, backgroundColor: '#10130B' },
-  eqBand: { flex: 1, alignItems: 'center' },
+  eqBand: { flex: 1, minWidth: 52, alignItems: 'center', paddingHorizontal: 8 },
   verticalSlider: { width: 205, height: 32, transform: [{ rotate: '-90deg' }], marginTop: 87, marginBottom: 86 },
   eqValue: { color: '#8D8A96', fontSize: 8 },
   eqLabel: { color: '#B1AEB9', fontSize: 8 },
