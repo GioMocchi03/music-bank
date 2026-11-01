@@ -1,6 +1,10 @@
 package io.servergio.giomusic
 
 import android.net.Uri
+import android.os.FileObserver
+import android.os.Handler
+import android.os.Looper
+import androidx.media3.common.Player
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -31,9 +35,21 @@ class MusicBankAutoService : MediaLibraryService() {
   private var player: ExoPlayer? = null
   private var librarySession: MediaLibrarySession? = null
   private val catalogue = AutoCatalogue()
+  private var observer: FileObserver? = null
+  private val mainHandler = Handler(Looper.getMainLooper())
+
+  private fun refresh() {
+    catalogue.load(File(filesDir, CATALOGUE_FILE))
+    librarySession?.let { session ->
+      catalogue.parentIds().forEach { id ->
+        session.notifyChildrenChanged(id, catalogue.children(id).size, null)
+      }
+    }
+  }
 
   override fun onCreate() {
     super.onCreate()
+    activeService = this
     catalogue.load(File(filesDir, CATALOGUE_FILE))
 
     val audioAttributes = AudioAttributes.Builder()
@@ -46,17 +62,27 @@ class MusicBankAutoService : MediaLibraryService() {
     librarySession = MediaLibrarySession.Builder(this, player!!, CatalogueCallback(catalogue))
       .setId("music-bank-auto")
       .build()
+    @Suppress("DEPRECATION")
+    val watcher = object : FileObserver(filesDir.path, FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE or FileObserver.DELETE) {
+      override fun onEvent(event: Int, path: String?) {
+        if (path == CATALOGUE_FILE) mainHandler.post { refresh() }
+      }
+    }
+    observer = watcher
+    watcher.startWatching()
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
-    return if (controllerInfo.isTrusted || controllerInfo.packageName == packageName) {
-      librarySession
-    } else {
-      null
-    }
+    // Consente ai browser multimediali esterni, incluso Android Auto,
+    // di collegarsi alla sessione. Media3 gestisce i comandi della sessione.
+    return librarySession
   }
 
   override fun onDestroy() {
+    observer?.stopWatching()
+    observer = null
+    mainHandler.removeCallbacksAndMessages(null)
+    if (activeService === this) activeService = null
     librarySession?.release()
     librarySession = null
     player?.release()
@@ -67,6 +93,17 @@ class MusicBankAutoService : MediaLibraryService() {
   private class CatalogueCallback(
     private val catalogue: AutoCatalogue,
   ) : MediaLibrarySession.Callback {
+    override fun onSubscribe(
+      session: MediaLibrarySession,
+      browser: MediaSession.ControllerInfo,
+      parentId: String,
+      params: LibraryParams?,
+    ): ListenableFuture<LibraryResult<Void>> {
+      catalogue.reloadIfChanged()
+      session.notifyChildrenChanged(browser, parentId, catalogue.children(parentId).size, params)
+      return Futures.immediateFuture(LibraryResult.ofVoid(params))
+    }
+
     override fun onGetLibraryRoot(
       session: MediaLibrarySession,
       browser: MediaSession.ControllerInfo,
@@ -132,6 +169,29 @@ class MusicBankAutoService : MediaLibraryService() {
       )
     }
 
+    override fun onSetMediaItems(
+      mediaSession: MediaSession,
+      controller: MediaSession.ControllerInfo,
+      mediaItems: List<MediaItem>,
+      startIndex: Int,
+      startPositionMs: Long,
+    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+      catalogue.reloadIfChanged()
+      if (mediaItems.size == 1 && mediaItems.first().localConfiguration == null) {
+        val requested = mediaItems.first().mediaId
+        val context = catalogue.playbackContext(requested)
+        if (context.isNotEmpty()) {
+          val index = context.indexOfFirst { it.mediaId == requested }.coerceAtLeast(0)
+          return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(context, index, startPositionMs))
+        }
+      }
+      val resolved = mediaItems.mapNotNull { item ->
+        item.takeIf { it.localConfiguration != null } ?: catalogue.playableItem(item.mediaId)
+      }
+      if (resolved.size != mediaItems.size) return Futures.immediateFailedFuture(IllegalArgumentException("Unknown media ID"))
+      return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(resolved, startIndex, startPositionMs))
+    }
+
     override fun onAddMediaItems(
       mediaSession: MediaSession,
       controller: MediaSession.ControllerInfo,
@@ -139,14 +199,13 @@ class MusicBankAutoService : MediaLibraryService() {
     ): ListenableFuture<List<MediaItem>> {
       catalogue.reloadIfChanged()
       val resolved = mediaItems.mapNotNull { requested ->
-        catalogue.playableItem(requested.mediaId) ?: requested.takeIf {
-          it.localConfiguration != null
-        }
+        requested.takeIf { it.localConfiguration != null } ?: catalogue.playableItem(requested.mediaId)
       }
       return Futures.immediateFuture(resolved)
     }
 
     private fun paginate(items: List<MediaItem>, page: Int, pageSize: Int): List<MediaItem> {
+      if (page < 0 || pageSize <= 0) return emptyList()
       val from = (page.toLong() * pageSize.toLong()).coerceAtMost(items.size.toLong()).toInt()
       val to = (from.toLong() + pageSize.toLong()).coerceAtMost(items.size.toLong()).toInt()
       return items.subList(from, to)
@@ -174,6 +233,17 @@ class MusicBankAutoService : MediaLibraryService() {
       if (modified != lastModified) readFile()
     }
 
+    fun parentIds(): Set<String> = childrenById.keys
+
+    fun playbackContext(mediaId: String): List<MediaItem> {
+      val song = songs.firstOrNull { it.mediaId == mediaId } ?: return emptyList()
+      val sameAlbum = songs.filter {
+        if (song.albumId != null) it.albumId == song.albumId
+        else it.album == song.album && it.artist == song.artist
+      }.sortedWith(compareBy<AutoSong> { it.discNumber }.thenBy { it.track })
+      return sameAlbum.mapNotNull { playableItem(it.mediaId) }
+    }
+
     fun children(parentId: String): List<MediaItem> = childrenById[parentId].orEmpty()
 
     fun item(mediaId: String): MediaItem? = itemsById[mediaId]
@@ -189,23 +259,22 @@ class MusicBankAutoService : MediaLibraryService() {
         .filter { (_, score) -> score < Int.MAX_VALUE }
         .sortedBy { (_, score) -> score }
         .mapNotNull { (song) -> itemsById[song.mediaId] }
-        .take(MAX_SEARCH_RESULTS)
         .toList()
     }
 
     private fun readFile() {
       val file = sourceFile ?: return
-      lastModified = if (file.exists()) file.lastModified() else -1L
-      songs = try {
+      val modified = if (file.exists()) file.lastModified() else -1L
+      val parsed = try {
         if (!file.exists()) emptyList() else parseSongs(file.readText())
-      } catch (_: Exception) {
-        emptyList()
-      }
+      } catch (_: Exception) { return }
+      songs = parsed
+      lastModified = modified
       rebuildIndex()
     }
 
     private fun parseSongs(json: String): List<AutoSong> {
-      val array = JSONObject(json).optJSONArray("songs") ?: return emptyList()
+      val array = JSONObject(json).getJSONArray("songs")
       return buildList {
         for (index in 0 until array.length()) {
           val value = array.optJSONObject(index) ?: continue
@@ -251,7 +320,7 @@ class MusicBankAutoService : MediaLibraryService() {
       childIndex[TRACKS_ID] = playableSongs.sortedBy { it.mediaMetadata.title.toString().lowercase() }
 
       indexGroups(
-        songs.groupBy { it.albumId ?: it.album ?: "Album sconosciuto" },
+        songs.groupBy { albumKey(it) },
         ALBUMS_ID,
         "album",
         { group -> group.first().album ?: "Album sconosciuto" },
@@ -275,9 +344,28 @@ class MusicBankAutoService : MediaLibraryService() {
         childIndex,
       )
 
+      songs.groupBy { it.artistId ?: it.artist ?: "Artista sconosciuto" }.forEach { (key, group) ->
+        childIndex["artist:${Uri.encode(key)}"] = group
+          .map { "album:${Uri.encode(albumKey(it))}" }.distinct().mapNotNull { itemIndex[it] }
+          .sortedBy { it.mediaMetadata.title.toString().lowercase(Locale.ITALIAN) }
+      }
+      // Legacy Auto browsers do not necessarily request later pages. Expose bounded folders.
+      childIndex.toMap().forEach { (parent, children) ->
+        if (children.size > 100) {
+          val pages = children.chunked(100).mapIndexed { index, chunk ->
+            val id = "page:$parent:$index"
+            childIndex[id] = chunk
+            browsable(id, "${index * 100 + 1}–${index * 100 + chunk.size}").also { itemIndex[id] = it }
+          }
+          childIndex[parent] = pages
+        }
+      }
       itemsById = itemIndex
       childrenById = childIndex
     }
+
+    private fun albumKey(song: AutoSong): String = song.albumId
+      ?: "${song.artist.orEmpty()}\u0000${song.album ?: "Album sconosciuto"}"
 
     private fun indexGroups(
       groups: Map<String, List<AutoSong>>,
@@ -355,7 +443,7 @@ class MusicBankAutoService : MediaLibraryService() {
       return Normalizer.normalize(value, Normalizer.Form.NFD)
         .replace("\\p{Mn}+".toRegex(), "")
         .lowercase(Locale.ITALIAN)
-        .replace("[^a-z0-9]+".toRegex(), " ")
+        .replace("[^\\p{L}\\p{N}]+".toRegex(), " ")
         .trim()
     }
   }
@@ -384,6 +472,7 @@ class MusicBankAutoService : MediaLibraryService() {
     private const val ARTISTS_ID = "music-bank-artists"
     private const val GENRES_ID = "music-bank-genres"
     private const val TRACKS_ID = "music-bank-tracks"
-    private const val MAX_SEARCH_RESULTS = 200
+    private var activeService: MusicBankAutoService? = null
+    fun refreshCatalogue() { activeService?.refresh() }
   }
 }
