@@ -3880,6 +3880,7 @@ function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
   onSave: (draft: PlaylistDraft) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
+  const { onAdd } = useContext(QueueActionsContext);
   const [name, setName] = useState('');
   const [comment, setComment] = useState('');
   const [isPublic, setIsPublic] = useState(false);
@@ -3973,7 +3974,8 @@ function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
 
           <SectionTitle title="Ordine dei brani" subtitle={`${draftSongs.length} nella playlist`} />
           {draftSongs.map((song, index) => (
-            <View key={`${song.id}-${index}`} style={styles.playlistEditRow}>
+            <SwipeRightAction key={`${song.id}-${index}`} onAction={() => { if (!busy) onAdd(song); }}>
+            <View style={styles.playlistEditRow}>
               <Text style={styles.trackNumber}>{index + 1}</Text>
               <View style={styles.trackCopy}>
                 <Text numberOfLines={1} style={styles.trackTitle}>{song.title}</Text>
@@ -3989,6 +3991,7 @@ function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
                 <MaterialCommunityIcons name="delete-outline" size={20} color="#FF7B8B" />
               </Pressable>
             </View>
+            </SwipeRightAction>
           ))}
           {!draftSongs.length && <PlaylistEmptyRow icon="playlist-remove" text="La playlist è vuota. Potrai aggiungere brani dal menu Più azioni." />}
           {!!error && <Text style={styles.playlistError}>{error}</Text>}
