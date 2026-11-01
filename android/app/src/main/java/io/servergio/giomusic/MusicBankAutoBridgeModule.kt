@@ -103,7 +103,13 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
         require(index in 0 until player.mediaItemCount)
         player.removeMediaItem(index)
       }
-      "append" -> {
+      "keepCurrent" -> {
+        // Only remove ranges: the retained occurrence, position and play state survive.
+        removalsKeepingCurrent(player.mediaItemCount, player.currentMediaItemIndex).forEach {
+          player.removeMediaItems(it.from, it.to)
+        }
+      }
+      "append", "next" -> {
         val value = org.json.JSONObject(json)
         val item = MediaItem.Builder().setMediaId("song:${value.getString("id")}")
           .setUri(value.getString("uri"))
@@ -111,7 +117,8 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
             .setArtist(value.optString("artist", "")).setAlbumTitle(value.optString("album", ""))
             .setArtworkUri(value.optString("coverUrl").takeIf { it.isNotBlank() }?.let(android.net.Uri::parse))
             .setIsPlayable(true).setIsBrowsable(false).build()).build()
-        player.addMediaItem(item)
+        if (operation == "next") player.addMediaItem((player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount), item)
+        else player.addMediaItem(item)
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
       }
       else -> throw IllegalArgumentException("Unknown queue operation")
@@ -132,6 +139,7 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
   @ReactMethod
   fun getPlaybackState(promise: Promise) = withController(promise) { player ->
     Arguments.createMap().apply {
+      putInt("audioSessionId", MusicBankAutoService.currentAudioSessionId())
       putString("mediaId", player.currentMediaItem?.mediaId)
       putDouble("positionMs", player.currentPosition.coerceAtLeast(0L).toDouble())
       putDouble("durationMs", player.duration.takeIf { it != C.TIME_UNSET && it > 0 }?.toDouble() ?: 0.0)

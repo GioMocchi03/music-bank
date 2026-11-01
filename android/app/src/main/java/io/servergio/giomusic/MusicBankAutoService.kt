@@ -472,6 +472,7 @@ class MusicBankAutoService : MediaLibraryService() {
     private const val ARTISTS_ID = "music-bank-artists"
     private const val GENRES_ID = "music-bank-genres"
     private const val TRACKS_ID = "music-bank-tracks"
+    fun currentAudioSessionId(): Int = activeService?.player?.audioSessionId ?: 0
     private var activeService: MusicBankAutoService? = null
     fun refreshCatalogue() { activeService?.refresh() }
   }
