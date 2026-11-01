@@ -220,10 +220,11 @@ class MusicBankAutoService : MediaLibraryService() {
     }
   }
 
-  private class AutoCatalogue {
+  internal class AutoCatalogue {
     private var sourceFile: File? = null
     private var lastModified = Long.MIN_VALUE
     private var songs = emptyList<AutoSong>()
+    private var metadata: JSONObject? = null
     private var itemsById = emptyMap<String, MediaItem>()
     private var childrenById = emptyMap<String, List<MediaItem>>()
     private var searchIndex = emptyList<Pair<MediaItem, List<String>>>()
@@ -284,9 +285,13 @@ class MusicBankAutoService : MediaLibraryService() {
       val file = sourceFile ?: return
       val modified = if (file.exists()) file.lastModified() else -1L
       val parsed = try {
-        if (!file.exists()) emptyList() else parseSongs(file.readText())
+        if (!file.exists()) null to emptyList() else {
+          val contents = file.readText()
+          JSONObject(contents) to parseSongs(contents)
+        }
       } catch (_: Exception) { return }
-      songs = parsed
+      metadata = parsed.first
+      songs = parsed.second
       lastModified = modified
       rebuildIndex()
     }
@@ -312,6 +317,7 @@ class MusicBankAutoService : MediaLibraryService() {
               discNumber = value.optInt("discNumber", 0),
               durationSeconds = value.optLong("duration", 0L),
               genre = value.cleanString("genre"),
+              starred = value.cleanString("starred") != null,
               artworkUrl = value.cleanString("coverUrl"),
               streamUrl = streamUrl,
             ),
@@ -367,10 +373,51 @@ class MusicBankAutoService : MediaLibraryService() {
           .map { "album:${Uri.encode(albumKey(it))}" }.distinct().mapNotNull { itemIndex[it] }
           .sortedBy { it.mediaMetadata.title.toString().lowercase(Locale.ITALIAN) }
       }
+      // Use the exact phone metadata (including canonical genre aliases), retaining
+      // the song-derived fallback for catalogues written by older app versions.
+      val metadataAlbums = metadata?.optJSONArray("albums")
+      val albumsByArtist = (0 until (metadataAlbums?.length() ?: 0)).mapNotNull { index ->
+        val album = metadataAlbums!!.optJSONObject(index) ?: return@mapNotNull null
+        val artist = album.cleanString("artistId") ?: return@mapNotNull null
+        val id = album.cleanString("id") ?: return@mapNotNull null
+        artist to id
+      }.groupBy({ it.first }, { it.second })
+      fun metadataFolders(arrayName: String, parentId: String, prefix: String, nameKey: String) {
+        val array = metadata?.optJSONArray(arrayName) ?: return
+        val folders = (0 until array.length()).mapNotNull { index ->
+          val value = array.optJSONObject(index) ?: return@mapNotNull null
+          val name = value.cleanString(nameKey) ?: return@mapNotNull null
+          val key = value.cleanString("id") ?: name
+          val id = "$prefix:${Uri.encode(key)}"
+          val original = childIndex[id].orEmpty()
+          val entries = if (prefix == "genre") {
+            val sources = value.optJSONArray("sourceValues")
+            val names = (0 until (sources?.length() ?: 0)).map { sources!!.getString(it) }.toSet() + name
+            songs.filter { it.genre in names }.mapNotNull { itemIndex[it.mediaId] }
+          } else if (prefix == "artist") {
+            (original + albumsByArtist[key].orEmpty().mapNotNull { itemIndex["album:${Uri.encode(it)}"] })
+              .distinctBy { it.mediaId }
+          } else original
+          childIndex[id] = entries
+          val artwork = value.cleanString("coverUrl") ?: value.cleanString("artistImageUrl")
+            ?: itemIndex[id]?.mediaMetadata?.artworkUri?.toString()
+            ?: entries.firstOrNull()?.mediaMetadata?.artworkUri?.toString()
+          browsable(id, name, artwork).also { itemIndex[id] = it }
+        }.sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
+        childIndex[parentId] = folders
+      }
+      metadataFolders("albums", ALBUMS_ID, "album", "name")
+      metadataFolders("artists", ARTISTS_ID, "artist", "name")
+      metadataFolders("genres", GENRES_ID, "genre", "value")
+      itemIndex[FAVORITES_ID] = browsable(FAVORITES_ID, "Preferiti")
+      childIndex[FAVORITES_ID] = songs.filter { it.starred }.mapNotNull { itemIndex[it.mediaId] }
+        .sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
+      val searchableIds = listOf(ALBUMS_ID, ARTISTS_ID, GENRES_ID, TRACKS_ID)
+        .flatMap { childIndex[it].orEmpty() }.map { it.mediaId }.toSet()
       // Search the original entities, never synthetic browse sections. Normalize once
       // per catalogue refresh rather than repeatedly scanning/allocating on each query.
       searchIndex = itemIndex.values.filter {
-        it.mediaId.startsWith("song:") || it.mediaId.startsWith("album:") || it.mediaId.startsWith("artist:") || it.mediaId.startsWith("genre:")
+        it.mediaId in searchableIds
       }.map { item ->
         item to listOfNotNull(item.mediaMetadata.title, item.mediaMetadata.artist,
           item.mediaMetadata.albumTitle, item.mediaMetadata.genre).map { normalizeAutoQuery(it.toString()) }
@@ -388,6 +435,8 @@ class MusicBankAutoService : MediaLibraryService() {
           }
         }
       }
+      // Keep four root tabs; favorites remain a prominent entry inside Brani.
+      childIndex[TRACKS_ID] = listOf(itemIndex.getValue(FAVORITES_ID)) + childIndex[TRACKS_ID].orEmpty()
       itemsById = itemIndex
       childrenById = childIndex
     }
@@ -470,6 +519,7 @@ class MusicBankAutoService : MediaLibraryService() {
     val discNumber: Int,
     val durationSeconds: Long,
     val genre: String?,
+    val starred: Boolean,
     val artworkUrl: String?,
     val streamUrl: String,
   ) {
@@ -483,6 +533,7 @@ class MusicBankAutoService : MediaLibraryService() {
     private const val ARTISTS_ID = "music-bank-artists"
     private const val GENRES_ID = "music-bank-genres"
     private const val TRACKS_ID = "music-bank-tracks"
+    private const val FAVORITES_ID = "music-bank-favorites"
     fun currentAudioSessionId(): Int = activeService?.player?.audioSessionId ?: 0
     private var activeService: MusicBankAutoService? = null
     fun refreshCatalogue() { activeService?.refresh() }

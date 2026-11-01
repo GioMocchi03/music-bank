@@ -46,7 +46,7 @@ import {
 
 import { editAndroidAutoQueue, setAndroidAutoQueue, usesAndroidAutoPlayer } from './src/native/androidAuto';
 import { useUnifiedPlayer } from './src/native/useUnifiedPlayer';
-import { clearAndroidAutoCatalog, ensureAndroidAutoCatalog, saveAndroidAutoCatalog } from './src/storage/androidAutoStore';
+import { clearAndroidAutoCatalog, ensureAndroidAutoCatalog, saveAndroidAutoCatalog, updateAndroidAutoFavorite } from './src/storage/androidAutoStore';
 import { clearConnection, loadConnection, saveConnection } from './src/storage/connectionStore';
 import { homeGreeting, normalizeServerUrl } from './src/utils/connection';
 import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured';
@@ -458,7 +458,7 @@ function MusicBankApp() {
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
         setSongs(snapshot.songs);
         if (saved) {
-          await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved)).catch(() => {
+          await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot).catch(() => {
             // Il catalogo Auto verrà rigenerato alla prossima sincronizzazione completa.
           });
         }
@@ -740,7 +740,7 @@ function MusicBankApp() {
         let autoWarning = false;
         setMessage('Aggiornamento catalogo Android Auto…');
         try {
-          await saveAndroidAutoCatalog(restoredSnapshot.songs, client);
+          await saveAndroidAutoCatalog(restoredSnapshot.songs, client, restoredSnapshot);
         } catch {
           autoWarning = true;
         }
@@ -1144,6 +1144,9 @@ function MusicBankApp() {
       );
       const nextSongs = songs.map((item) => (item.id === song.id ? { ...item, starred } : item));
       setSongs(nextSongs);
+      void updateAndroidAutoFavorite(song.id, starred).catch(() =>
+        setMessage('Preferito aggiornato · catalogo Android Auto da aggiornare.'),
+      );
       void saveLibrary({
         albums,
         artists,

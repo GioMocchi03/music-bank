@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import type { Song, NavidromeClient } from '../src/subsonic/NavidromeClient.ts';
+import type { Song, NavidromeClient, Album, Artist, Genre } from '../src/subsonic/NavidromeClient.ts';
 
 function store(os = 'android') {
   const files = new Map<string, string>();
@@ -15,6 +15,7 @@ function store(os = 'android') {
     get exists() { return files.has(this.uri); }
     create() { files.set(this.uri, ''); }
     write(value: string) { files.set(this.uri, value); }
+    async text() { return files.get(this.uri)!; }
     delete() { files.delete(this.uri); }
     async move(to: File, options: { overwrite?: boolean }) {
       assert.equal(options.overwrite, true);
@@ -35,7 +36,8 @@ function store(os = 'android') {
   }).outputText;
   const exports = {} as {
     ensureAndroidAutoCatalog(songs: Song[], client: NavidromeClient): Promise<void>;
-    saveAndroidAutoCatalog(songs: Song[], client: NavidromeClient): Promise<void>;
+    saveAndroidAutoCatalog(songs: Song[], client: NavidromeClient, metadata?: { albums: Album[]; artists: Artist[]; genres: Genre[] }): Promise<void>;
+    updateAndroidAutoFavorite(songId: string, starred?: string): Promise<void>;
     clearAndroidAutoCatalog(): Promise<void>;
   };
   vm.runInNewContext(compiled, { exports, Date, require: (name: string) => {
@@ -94,4 +96,39 @@ test('other platforms never write or notify Android', async () => {
   await s.clearAndroidAutoCatalog();
   assert.equal(s.files.size, 0);
   assert.equal(s.notifications(), 0);
+});
+
+test('catalogue carries exact phone entities and initial favorite flags', async () => {
+  const s = store();
+  const metadata = { albums: [{ id: 'a', name: 'Album', artist: 'Artist' }], artists: [{ id: 'r', name: 'Artist' }], genres: [{ value: 'Hip-Hop', songCount: 1, albumCount: 1, sourceValues: ['Hip Hop'] }] };
+  await s.saveAndroidAutoCatalog([{ ...song, starred: 'yes' }], client, metadata);
+  const catalog = JSON.parse(s.files.get(path)!);
+  assert.deepEqual(catalog.albums, metadata.albums);
+  assert.deepEqual(catalog.artists, metadata.artists);
+  assert.deepEqual(catalog.genres, metadata.genres);
+  assert.equal(catalog.songs[0].starred, 'yes');
+});
+
+test('favorite edits follow pending saves and preserve stream URLs and metadata', async () => {
+  const s = store();
+  const saving = s.saveAndroidAutoCatalog([song], client);
+  const starring = s.updateAndroidAutoFavorite(song.id, 'now');
+  await Promise.all([saving, starring]);
+  const starred = JSON.parse(s.files.get(path)!);
+  assert.equal(starred.songs[0].starred, 'now');
+  assert.match(starred.songs[0].streamUrl, /token=updated/);
+  await s.updateAndroidAutoFavorite(song.id);
+  assert.equal(JSON.parse(s.files.get(path)!).songs[0].starred, undefined);
+  assert.equal(s.notifications(), 3);
+  assert.equal(s.files.size, 1);
+});
+
+test('failed favorite write retains the usable catalogue and recovers', async () => {
+  const s = store();
+  await s.saveAndroidAutoCatalog([song], client);
+  const previous = s.files.get(path);
+  s.failMove();
+  await assert.rejects(s.updateAndroidAutoFavorite(song.id, 'now'));
+  assert.equal(s.files.get(path), previous);
+  assert.equal(s.files.size, 1);
 });
