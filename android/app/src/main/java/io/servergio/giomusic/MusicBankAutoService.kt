@@ -2,6 +2,7 @@ package io.servergio.giomusic
 
 import android.net.Uri
 import android.os.FileObserver
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.Player
@@ -20,7 +21,6 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
 import java.io.File
-import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -110,7 +110,10 @@ class MusicBankAutoService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<MediaItem>> {
       catalogue.reloadIfChanged()
-      return Futures.immediateFuture(LibraryResult.ofItem(catalogue.root, params))
+      return Futures.immediateFuture(LibraryResult.ofItem(catalogue.root, LibraryParams.Builder()
+        .setExtras(Bundle().apply {
+          putBoolean("android.media.browse.SEARCH_SUPPORTED", true)
+        }).build()))
     }
 
     override fun onGetChildren(
@@ -151,7 +154,12 @@ class MusicBankAutoService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<Void>> {
       catalogue.reloadIfChanged()
-      session.notifySearchResultChanged(browser, query, catalogue.search(query).size, params)
+      // Complete the command before delivering the result event. Legacy Auto browsers
+      // bridge this event to their pending MediaBrowserCompat search request.
+      val count = catalogue.search(query).size
+      Handler(Looper.getMainLooper()).post {
+        session.notifySearchResultChanged(browser, query, count, params)
+      }
       return Futures.immediateFuture(LibraryResult.ofVoid(params))
     }
 
@@ -218,6 +226,10 @@ class MusicBankAutoService : MediaLibraryService() {
     private var songs = emptyList<AutoSong>()
     private var itemsById = emptyMap<String, MediaItem>()
     private var childrenById = emptyMap<String, List<MediaItem>>()
+    private var searchIndex = emptyList<Pair<MediaItem, List<String>>>()
+    private val searchCache = object : LinkedHashMap<String, List<MediaItem>>(16, 0.75f, true) {
+      override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MediaItem>>): Boolean = size > 16
+    }
 
     val root: MediaItem
       get() = browsable(ROOT_ID, "Music Bank")
@@ -252,14 +264,19 @@ class MusicBankAutoService : MediaLibraryService() {
       itemsById[mediaId]?.takeIf { it.mediaMetadata.isPlayable == true }
 
     fun search(query: String): List<MediaItem> {
-      val needle = normalize(query)
+      val needle = normalizeAutoQuery(query)
       if (needle.isBlank()) return emptyList()
-      return songs.asSequence()
-        .map { song -> song to searchScore(song, needle) }
-        .filter { (_, score) -> score < Int.MAX_VALUE }
-        .sortedBy { (_, score) -> score }
-        .mapNotNull { (song) -> itemsById[song.mediaId] }
-        .toList()
+      return searchCache.getOrPut(needle) {
+        // Bound the legacy Binder response, including short queries matching thousands
+        // of tracks. Return actual artists/albums as well as playable songs.
+        searchIndex.asSequence()
+          .map { (item, fields) -> item to autoSearchScore(fields, needle) }
+          .filter { (_, score) -> score < Int.MAX_VALUE }
+          .sortedBy { (_, score) -> score }
+          .take(80)
+          .map { it.first }
+          .toList()
+      }
     }
 
     private fun readFile() {
@@ -349,15 +366,25 @@ class MusicBankAutoService : MediaLibraryService() {
           .map { "album:${Uri.encode(albumKey(it))}" }.distinct().mapNotNull { itemIndex[it] }
           .sortedBy { it.mediaMetadata.title.toString().lowercase(Locale.ITALIAN) }
       }
-      // Legacy Auto browsers do not necessarily request later pages. Expose bounded folders.
+      // Search the original entities, never synthetic browse sections. Normalize once
+      // per catalogue refresh rather than repeatedly scanning/allocating on each query.
+      searchIndex = itemIndex.values.filter {
+        it.mediaId.startsWith("song:") || it.mediaId.startsWith("album:") || it.mediaId.startsWith("artist:")
+      }.map { item ->
+        item to listOfNotNull(item.mediaMetadata.title, item.mediaMetadata.artist,
+          item.mediaMetadata.albumTitle, item.mediaMetadata.genre).map { normalizeAutoQuery(it.toString()) }
+      }
+      searchCache.clear()
+      // Legacy Auto does not necessarily request subsequent API pages. Keep every
+      // entity accessible through named alphabetical sections instead of numeric pages.
       childIndex.toMap().forEach { (parent, children) ->
         if (children.size > 100) {
-          val pages = children.chunked(100).mapIndexed { index, chunk ->
-            val id = "page:$parent:$index"
-            childIndex[id] = chunk
-            browsable(id, "${index * 100 + 1}–${index * 100 + chunk.size}").also { itemIndex[id] = it }
+          val sections = browseSections(children) { it.mediaMetadata.title.toString() }
+          childIndex[parent] = sections.mapIndexed { index, section ->
+            val id = "section:$parent:$index"
+            childIndex[id] = section.items
+            browsable(id, section.title).also { itemIndex[id] = it }
           }
-          childIndex[parent] = pages
         }
       }
       itemsById = itemIndex
@@ -428,24 +455,7 @@ class MusicBankAutoService : MediaLibraryService() {
       return optString(key).trim().takeIf { it.isNotBlank() && it != "null" }
     }
 
-    private fun searchScore(song: AutoSong, query: String): Int {
-      val fields = listOf(song.title, song.artist, song.album, song.genre)
-        .mapNotNull { it?.let(::normalize) }
-      if (fields.any { it == query }) return 0
-      if (fields.any { it.startsWith(query) }) return 1
-      if (fields.any { it.contains(query) }) return 2
-      val compactQuery = query.replace(" ", "")
-      if (fields.any { it.replace(" ", "").contains(compactQuery) }) return 3
-      return Int.MAX_VALUE
-    }
 
-    private fun normalize(value: String): String {
-      return Normalizer.normalize(value, Normalizer.Form.NFD)
-        .replace("\\p{Mn}+".toRegex(), "")
-        .lowercase(Locale.ITALIAN)
-        .replace("[^\\p{L}\\p{N}]+".toRegex(), " ")
-        .trim()
-    }
   }
 
   private data class AutoSong(
