@@ -3578,17 +3578,19 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
 function EqualizerBand({ frequency, value, min, max, disabled, onChange }: { frequency: number; value: number; min: number; max: number; disabled: boolean; onChange: (value: number) => void }) {
   const height = 190;
   const startValueRef = useRef(value);
+  const live = useRef({ value, min, max, disabled, onChange });
+  live.current = { value, min, max, disabled, onChange };
   const pan = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => !disabled,
-    onStartShouldSetPanResponderCapture: () => !disabled,
-    onMoveShouldSetPanResponder: (_, gesture) => !disabled && Math.abs(gesture.dy) > 2,
-    onMoveShouldSetPanResponderCapture: (_, gesture) => !disabled && Math.abs(gesture.dy) > 2,
-    onPanResponderGrant: () => { startValueRef.current = value; },
+    onStartShouldSetPanResponder: () => !live.current.disabled,
+    onStartShouldSetPanResponderCapture: () => !live.current.disabled,
+    onMoveShouldSetPanResponder: (_, gesture) => !live.current.disabled && Math.abs(gesture.dy) > 2,
+    onMoveShouldSetPanResponderCapture: (_, gesture) => !live.current.disabled && Math.abs(gesture.dy) > 2,
+    onPanResponderGrant: () => { startValueRef.current = live.current.value; },
     onPanResponderMove: (_, gesture) => {
-      onChange(equalizerLevelAfterDrag(startValueRef.current, gesture.dy, height, min, max));
+      live.current.onChange(equalizerLevelAfterDrag(startValueRef.current, gesture.dy, height, live.current.min, live.current.max));
     },
     onPanResponderTerminationRequest: () => false,
-  }), [disabled, max, min, onChange, value]);
+  }), []);
   const ratio = max === min ? 0.5 : (value - min) / (max - min);
   return (
     <View style={[styles.eqBand, disabled && { opacity: 0.4 }]} {...pan.panHandlers}>

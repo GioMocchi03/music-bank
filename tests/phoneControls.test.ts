@@ -105,9 +105,14 @@ test('equalizer restores settings and applies band drags to the supplied Media3 
   assert.equal(c.calls.at(-1)!.enabled, true);
   assert.deepEqual(c.calls.at(-1)!.levels, [100, 200]);
   const bands = view.root.findAll((node) => String(node.type) === 'View' && node.props.onPanResponderMove);
+  const initialBandMove = bands[0].props.onPanResponderMove;
   await act(async () => bands[0].props.onPanResponderGrant());
   await act(async () => bands[0].props.onPanResponderMove(null, { dy: -50 }));
   assert.ok(c.calls.at(-1)!.levels[0] > 100);
+  const movedBand = view.root.findAll((node) => String(node.type) === 'View' && node.props.onPanResponderMove)[0];
+  assert.equal(movedBand.props.onPanResponderMove, initialBandMove);
+  await act(async () => movedBand.props.onPanResponderMove(null, { dy: -80 }));
+  assert.ok(c.calls.at(-1)!.levels[0] > 1000);
   await act(async () => view.update(React.createElement(c.EqualizerModal, { visible: false, sessionId: 88, onClose() {} })));
   assert.equal(c.calls.at(-1)!.session, 88);
   await act(async () => view.unmount());
