@@ -17,3 +17,12 @@ internal fun autoSearchScore(fields: List<String>, query: String): Int {
   if (fields.any { it.replace(" ", "").contains(compactQuery) }) return 3
   return Int.MAX_VALUE
 }
+
+/** Keep navigable exact artist/album hits visible even with thousands of matching songs. */
+internal fun <T> searchAutoIndex(index: List<Pair<T, List<String>>>, query: String, priority: (T) -> Int): List<T> {
+  if (query.isBlank()) return emptyList()
+  return index.asSequence().map { (item, fields) -> item to autoSearchScore(fields, query) }
+    .filter { it.second < Int.MAX_VALUE }
+    .sortedWith(compareBy<Pair<T, Int>> { it.second }.thenBy { priority(it.first) })
+    .take(80).map { it.first }.toList()
+}

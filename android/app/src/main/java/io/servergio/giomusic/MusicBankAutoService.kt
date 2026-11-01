@@ -269,13 +269,13 @@ class MusicBankAutoService : MediaLibraryService() {
       return searchCache.getOrPut(needle) {
         // Bound the legacy Binder response, including short queries matching thousands
         // of tracks. Return actual artists/albums as well as playable songs.
-        searchIndex.asSequence()
-          .map { (item, fields) -> item to autoSearchScore(fields, needle) }
-          .filter { (_, score) -> score < Int.MAX_VALUE }
-          .sortedBy { (_, score) -> score }
-          .take(80)
-          .map { it.first }
-          .toList()
+        searchAutoIndex(searchIndex, needle, { item ->
+          when {
+            item.mediaId.startsWith("artist:") -> 0
+            item.mediaId.startsWith("album:") -> 1
+            else -> 2
+          }
+        })
       }
     }
 
