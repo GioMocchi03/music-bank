@@ -9,9 +9,10 @@ internal data class BrowseSection<T>(val title: String, val items: List<T>)
 internal fun <T> browseSections(items: List<T>, title: (T) -> String): List<BrowseSection<T>> {
   fun key(item: T): String = Normalizer.normalize(title(item), Normalizer.Form.NFD)
     .replace("\\p{Mn}+".toRegex(), "").trim().uppercase(Locale.ROOT)
-  return items.sortedBy(::key).groupBy { item ->
-    key(item).firstOrNull()?.takeIf { it.isLetter() }?.toString() ?: "#"
-  }.flatMap { (letter, group) ->
+  return items.map { it to key(it) }.sortedBy { it.second }.groupBy { (_, key) ->
+    key.firstOrNull()?.takeIf { it.isLetter() }?.toString() ?: "#"
+  }.flatMap { (letter, keyedGroup) ->
+    val group = keyedGroup.map { it.first }
     group.chunked(100).map { chunk ->
       val label = if (group.size <= 100) letter
         else "$letter · ${title(chunk.first())} – ${title(chunk.last())}"
