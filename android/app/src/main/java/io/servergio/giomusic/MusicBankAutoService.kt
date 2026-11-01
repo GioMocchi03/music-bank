@@ -286,8 +286,13 @@ class MusicBankAutoService : MediaLibraryService() {
       val modified = if (file.exists()) file.lastModified() else -1L
       val parsed = try {
         if (!file.exists()) null to emptyList() else {
-          val contents = file.readText()
-          JSONObject(contents) to parseSongs(contents)
+          val document = JSONObject(file.readText())
+          val entities = JSONObject().apply {
+            listOf("albums", "artists", "genres").forEach { key ->
+              document.optJSONArray(key)?.let { put(key, it) }
+            }
+          }
+          entities to parseSongs(document)
         }
       } catch (_: Exception) { return }
       metadata = parsed.first
@@ -296,8 +301,8 @@ class MusicBankAutoService : MediaLibraryService() {
       rebuildIndex()
     }
 
-    private fun parseSongs(json: String): List<AutoSong> {
-      val array = JSONObject(json).getJSONArray("songs")
+    private fun parseSongs(json: JSONObject): List<AutoSong> {
+      val array = json.getJSONArray("songs")
       return buildList {
         for (index in 0 until array.length()) {
           val value = array.optJSONObject(index) ?: continue
