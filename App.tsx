@@ -292,12 +292,14 @@ function MusicBankApp() {
     keepAudioSessionActive: true,
   });
   const nativeLoadFinishedRef = useRef(0);
+  const nativeKnownSongsRef = useRef(new Map<string, Song>());
+  useEffect(() => { nativeKnownSongsRef.current.clear(); }, [activeSourceKey]);
   const expoStatus = useAudioPlayerStatus(expoPlayer);
   const { player, status: playerStatus, state: autoState, error: autoError, command: autoCommand } = useUnifiedPlayer(expoPlayer, expoStatus);
   useEffect(() => { if (autoError) setMessage(`Android Auto: ${autoError}`); }, [autoError]);
   useEffect(() => {
     if (!autoState || disconnectingRef.current || autoState.sampledAt <= nativeLoadFinishedRef.current) return;
-    const known = new Map([...songs, ...queueRef.current].map((song) => [song.id, song]));
+    const known = new Map([...songs, ...nativeKnownSongsRef.current.values(), ...queueRef.current].map((song) => [song.id, song]));
     const nativeQueue = autoState.queueIds.map((id) => known.get(id));
     // Never silently shorten a queue whose library has not finished loading.
     if (nativeQueue.some((song) => !song)) return;
@@ -830,7 +832,10 @@ function MusicBankApp() {
       const generation = playbackGenerationRef.current + 1;
       playbackGenerationRef.current = generation;
       try {
-        if (usesAndroidAutoPlayer) nativeLoadFinishedRef.current = Infinity;
+        if (usesAndroidAutoPlayer) {
+          nativeLoadFinishedRef.current = Infinity;
+          songs.forEach((item) => nativeKnownSongsRef.current.set(item.id, item));
+        }
         setQueue(songs);
         setQueueIndex(index);
         const uri = useLocal ? stored!.localUri : await client!.streamUrl(song.id);
@@ -1507,6 +1512,7 @@ function MusicBankApp() {
               const local = stored && (!!actionTarget.offlineSourceKey || !clientRef.current || !connected || preferences.preferOffline);
               if (!local && (!clientRef.current || !songBelongsToSource(actionTarget, activeSourceKey))) throw new Error('Collega il server di questo brano.');
               const uri = local ? stored.localUri : await clientRef.current!.streamUrl(actionTarget.id);
+              nativeKnownSongsRef.current.set(actionTarget.id, actionTarget);
               await editAndroidAutoQueue('append', 0, 0, { ...actionTarget, uri });
               // Include a newly queued song even if it came from remote search.
               setQueue((current) => [...current, actionTarget]);

@@ -31,8 +31,10 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
         SessionToken(context, ComponentName(context, MusicBankAutoService::class.java)))
         .buildAsync().also { connection = it }
       future.addListener({
+        var resolved: MediaController? = null
         try {
           val controller = future.get()
+          resolved = controller
           if (invalidated) throw IllegalStateException("Bridge disposed")
           if (!controller.isConnected) {
             connection = null
@@ -41,7 +43,7 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
           }
           promise.resolve(action(controller))
         } catch (error: Exception) {
-          if (future.isCancelled) connection = null
+          if (resolved == null && connection === future) connection = null
           promise.reject("ANDROID_AUTO", error)
         }
       }, { task -> handler.post(task) })

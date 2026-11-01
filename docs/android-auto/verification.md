@@ -21,11 +21,16 @@ Browse hierarchy: albums, artists → albums, genres, songs; lists over 100 entr
 - TypeScript: PASS.
 - Unit tests: 57 PASS (including five catalog persistence tests).
 - Android Metro/Hermes export: PASS.
-- Kotlin/Gradle: BLOCKED before compilation. After fetching Gradle 9.3.1 separately, offline and online attempts both failed resolving org.gradle.toolchains.foojay-resolver-convention:1.0.0. No Kotlin compilation result is available.
-- EAS preview command attempted: BLOCKED before starting a build because this environment is not logged into Expo.
+- Expo Doctor: 20/20 checks PASS.
+- Native verification at commit fb7cee3e1673627360f89a3391972a05d3bd314f: PASS — compileDebugKotlin and assembleDebug completed; BUILD SUCCESSFUL in 7m45s. Run: https://github.com/GioMocchi03/music-bank/actions/runs/41293062272
+- JVM test task: NO-SOURCE, not evidence of Kotlin behavior tests.
+- Debug artifact: music-bank-android-auto-debug, artifact ID 13078686558. This is a debug/Metro build for technical verification, not the final standalone EAS release APK.
+- GitHub CI and secret scan: PASS.
+- EAS preview: NOT STARTED. Both local CLI and the CI job confirm missing Expo authentication; EXPO_TOKEN must be configured as a repository Actions secret.
 - Android Auto vehicle/DHU: NOT RUN.
-- GitHub native CI: NOT STARTED. Publishing the review branch was rejected by automatic approval review because the repository is public and contains previously unpublished local work; explicit publication authorization is needed.
-- No installable verified APK has been produced.
+- Publication authorized by the user; draft PR: https://github.com/GioMocchi03/music-bank/pull/7 . Main and the Debian server remain unchanged.
+- The subsequent patch retains remotely searched queue entries across stale samples and retries failed controller connections. TypeScript passes; its native verification will run on the updated branch.
+- No production-signed standalone APK has been produced yet.
 
 The existing tests for queue utilities were restored with the matching functions already present on GitHub; the local snapshot lacked these exports.
 
