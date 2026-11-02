@@ -13,7 +13,7 @@
   },
   "homepage": "https://github.com/GioMocchi03/music-bank#readme",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24.11.0 <25"
   },
   "main": "index.ts",
   "dependencies": {
