@@ -1,6 +1,6 @@
 {
   "name": "gio-music",
-  "version": "1.3.12",
+  "version": "1.3.17",
   "description": "Client musicale per Navidrome e Subsonic con libreria sincronizzata, download offline e integrazione Android Auto.",
   "license": "MIT",
   "author": "GioMocchi03",
@@ -42,6 +42,8 @@
     "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^24.19.0",
     "@types/react": "~19.2.2",
+    "@types/react-test-renderer": "^19.3.0",
+    "react-test-renderer": "^19.2.3",
     "typescript": "~6.0.3"
   },
   "scripts": {

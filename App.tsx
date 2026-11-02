@@ -1,5 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import GioConnectionStore from './modules/gio-equalizer/src/GioConnectionStoreModule';
+import { isQueueSwipe, queueDropIndex } from './src/player/gestures';
+import { equalizerLevelAfterDrag } from './src/player/equalizer';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   setAudioModeAsync,
@@ -41,16 +44,16 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-import { clearAndroidAutoCatalog, ensureAndroidAutoCatalog, saveAndroidAutoCatalog } from './src/storage/androidAutoStore';
+import { editAndroidAutoQueue, setAndroidAutoQueue, usesAndroidAutoPlayer } from './src/native/androidAuto';
+import { useUnifiedPlayer } from './src/native/useUnifiedPlayer';
+import { clearAndroidAutoCatalog, ensureAndroidAutoCatalog, saveAndroidAutoCatalog, updateAndroidAutoFavorite } from './src/storage/androidAutoStore';
 import { clearConnection, loadConnection, saveConnection } from './src/storage/connectionStore';
-import GioConnectionStore from './modules/gio-equalizer/src/GioConnectionStoreModule';
 import { homeGreeting, normalizeServerUrl } from './src/utils/connection';
 import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured';
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
-import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, nextQueueIndex, previousQueueIndex, removeQueueItem, removedQueueIndex, type RepeatMode } from './src/player/queue';
-import { equalizerLevelAfterDrag } from './src/player/equalizer';
+import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { configureWebEqualizer } from './src/player/webEqualizer';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
@@ -125,6 +128,9 @@ type SearchFilter = 'all' | 'artists' | 'albums' | 'songs';
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
 const lime = '#D6FF4B';
+const QueueActionsContext = createContext<{ onAdd: (song: Song) => void }>({ onAdd: () => {} });
+const EQUALIZER_STORAGE_KEY = 'music_bank_equalizer_v1';
+
 const OfflineContext = createContext<{
   tracks: Map<string, OfflineTrack>;
   jobs: Record<string, DownloadJob>;
@@ -132,26 +138,9 @@ const OfflineContext = createContext<{
   onDownload: (song: Song) => void;
   onDownloadMany: (songs: Song[]) => void;
 }>({ tracks: new Map(), jobs: {}, sourceKey: 'legacy', onDownload: () => {}, onDownloadMany: () => {} });
-const QueueActionsContext = createContext<{ onAdd: (song: Song) => void }>({ onAdd: () => {} });
 const AUTO_SYNC_FRESHNESS_MS = 6 * 60 * 60 * 1000;
-const EQUALIZER_STORAGE_KEY = 'music_bank_equalizer_v1';
-const demoSongs: Song[] = [
-  { id: 'demo-neon-1', title: 'Neon Drive', album: 'Night Signals', albumId: 'demo-album-neon', artist: 'Local Echoes', artistId: 'demo-artist-echoes', track: 1, duration: 214, year: 2026, genre: 'Electronic', suffix: 'flac', bitDepth: 24, samplingRate: 96000 },
-  { id: 'demo-neon-2', title: 'After Midnight', album: 'Night Signals', albumId: 'demo-album-neon', artist: 'Local Echoes', artistId: 'demo-artist-echoes', track: 2, duration: 188, year: 2026, genre: 'Electronic', suffix: 'flac', bitDepth: 24, samplingRate: 96000 },
-  { id: 'demo-neon-3', title: 'City Lights', album: 'Night Signals', albumId: 'demo-album-neon', artist: 'Local Echoes', artistId: 'demo-artist-echoes', track: 3, duration: 241, year: 2026, genre: 'Electronic', suffix: 'flac', bitDepth: 24, samplingRate: 96000 },
-  { id: 'demo-neon-4', title: 'Last Train Home', album: 'Night Signals', albumId: 'demo-album-neon', artist: 'Local Echoes', artistId: 'demo-artist-echoes', track: 4, duration: 205, year: 2026, genre: 'Electronic', suffix: 'flac', bitDepth: 24, samplingRate: 96000 },
-  { id: 'demo-sun-1', title: 'Open Roads', album: 'Golden Hours', albumId: 'demo-album-sun', artist: 'Paper Skies', artistId: 'demo-artist-skies', track: 1, duration: 196, year: 2025, genre: 'Indie', suffix: 'flac', bitDepth: 16, samplingRate: 44100 },
-  { id: 'demo-sun-2', title: 'Polaroid Summer', album: 'Golden Hours', albumId: 'demo-album-sun', artist: 'Paper Skies', artistId: 'demo-artist-skies', track: 2, duration: 223, year: 2025, genre: 'Indie', suffix: 'flac', bitDepth: 16, samplingRate: 44100 },
-  { id: 'demo-sun-3', title: 'Slow Horizon', album: 'Golden Hours', albumId: 'demo-album-sun', artist: 'Paper Skies', artistId: 'demo-artist-skies', track: 3, duration: 249, year: 2025, genre: 'Indie', suffix: 'flac', bitDepth: 16, samplingRate: 44100 },
-  { id: 'demo-sun-4', title: 'Home Again', album: 'Golden Hours', albumId: 'demo-album-sun', artist: 'Paper Skies', artistId: 'demo-artist-skies', track: 4, duration: 179, year: 2025, genre: 'Indie', suffix: 'flac', bitDepth: 16, samplingRate: 44100 },
-];
 const demoAlbums: Album[] = [
-  { id: 'demo-album-neon', name: 'Night Signals', artist: 'Local Echoes', artistId: 'demo-artist-echoes', songCount: 4, duration: 848, year: 2026, genre: 'Electronic', song: demoSongs.slice(0, 4) },
-  { id: 'demo-album-sun', name: 'Golden Hours', artist: 'Paper Skies', artistId: 'demo-artist-skies', songCount: 4, duration: 847, year: 2025, genre: 'Indie', song: demoSongs.slice(4) },
-];
-const demoArtists: Artist[] = [
-  { id: 'demo-artist-echoes', name: 'Local Echoes', albumCount: 1, album: [demoAlbums[0]] },
-  { id: 'demo-artist-skies', name: 'Paper Skies', albumCount: 1, album: [demoAlbums[1]] },
+  { id: 'demo-1', name: 'Collega Navidrome', artist: 'La tua musica apparirà qui' },
 ];
 const emptySearch: SearchResults = { albums: [], artists: [], songs: [] };
 
@@ -308,13 +297,31 @@ function MusicBankApp() {
     }
   }, []);
 
-  const player = useAudioPlayer(null, {
+  const expoPlayer = useAudioPlayer(null, {
     updateInterval: 750,
     keepAudioSessionActive: true,
     crossOrigin: Platform.OS === 'web' ? 'anonymous' : undefined,
   });
-  const playerStatus = useAudioPlayerStatus(player);
-  const audioSessionId = Number((player as unknown as { audioSessionId?: number }).audioSessionId ?? 0);
+  const nativeLoadFinishedRef = useRef(0);
+  const nativeKnownSongsRef = useRef(new Map<string, Song>());
+  useEffect(() => { nativeKnownSongsRef.current.clear(); }, [activeSourceKey]);
+  const expoStatus = useAudioPlayerStatus(expoPlayer);
+  const { player, status: playerStatus, state: autoState, error: autoError, command: autoCommand } = useUnifiedPlayer(expoPlayer, expoStatus);
+  useEffect(() => { if (autoError) setMessage(`Android Auto: ${autoError}`); }, [autoError]);
+  useEffect(() => {
+    if (!autoState || disconnectingRef.current || autoState.sampledAt <= nativeLoadFinishedRef.current) return;
+    const known = new Map([...songs, ...nativeKnownSongsRef.current.values(), ...queueRef.current].map((song) => [song.id, song]));
+    const nativeQueue = autoState.queueIds.map((id) => known.get(id));
+    // Never silently shorten a queue whose library has not finished loading.
+    if (nativeQueue.some((song) => !song)) return;
+    if (queueRef.current.map((song) => song.id).join('\0') !== autoState.queueIds.join('\0')) {
+      setQueue(nativeQueue as Song[]);
+    }
+    setQueueIndex(autoState.queueIds.length ? autoState.queueIndex : -1);
+    setShuffle(autoState.shuffle);
+    setRepeat(autoState.repeatMode === 1 ? 'one' : autoState.repeatMode === 2 ? 'all' : 'none');
+  }, [autoState, songs]);
+  const audioSessionId = autoState?.audioSessionId ?? 0;
   const currentSong = queueIndex >= 0 ? queue[queueIndex] : undefined;
   const actionTarget = actionSong ?? currentSong;
 
@@ -453,7 +460,7 @@ function MusicBankApp() {
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
         setSongs(snapshot.songs);
         if (saved) {
-          await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved)).catch(() => {
+          await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot).catch(() => {
             // Il catalogo Auto verrà rigenerato alla prossima sincronizzazione completa.
           });
         }
@@ -477,19 +484,6 @@ function MusicBankApp() {
       }
     };
   }, [verifyConnection]);
-
-  useEffect(() => {
-    if (!__DEV__ || Platform.OS !== 'web' || !bootstrapReady || authenticatedUsername || albums.length) return;
-    setAlbums(demoAlbums);
-    setArtists(demoArtists);
-    setGenres([
-      { value: 'Electronic', songCount: 4, albumCount: 1 },
-      { value: 'Indie', songCount: 4, albumCount: 1 },
-    ]);
-    setSongs(demoSongs);
-    setFeaturedAlbumId(demoAlbums[0].id);
-    setMessage('Modalità demo locale · nessun login richiesto');
-  }, [albums.length, authenticatedUsername, bootstrapReady]);
 
   useEffect(() => {
     void setAudioModeAsync({
@@ -748,7 +742,7 @@ function MusicBankApp() {
         let autoWarning = false;
         setMessage('Aggiornamento catalogo Android Auto…');
         try {
-          await saveAndroidAutoCatalog(restoredSnapshot.songs, client);
+          await saveAndroidAutoCatalog(restoredSnapshot.songs, client, restoredSnapshot);
         } catch {
           autoWarning = true;
         }
@@ -841,12 +835,6 @@ function MusicBankApp() {
       const client = clientRef.current;
       const song = songs[index];
       if (!song || disconnectingRef.current) return;
-      if (__DEV__ && Platform.OS === 'web' && song.id.startsWith('demo-')) {
-        setQueue(songs);
-        setQueueIndex(index);
-        setMessage('Anteprima demo · riproduzione audio non inclusa');
-        return;
-      }
       const stored = offlineByKey.get(downloadKey(song, activeSourceKey));
       const useLocal = !!stored && (!!song.offlineSourceKey || !client || !connected || preferences.preferOffline);
       if (!stored && (!client || !songBelongsToSource(song, activeSourceKey))) {
@@ -856,11 +844,31 @@ function MusicBankApp() {
       const generation = playbackGenerationRef.current + 1;
       playbackGenerationRef.current = generation;
       try {
+        if (usesAndroidAutoPlayer) {
+          nativeLoadFinishedRef.current = Infinity;
+          songs.forEach((item) => nativeKnownSongsRef.current.set(item.id, item));
+        }
         setQueue(songs);
         setQueueIndex(index);
         const uri = useLocal ? stored!.localUri : await client!.streamUrl(song.id);
         if (generation !== playbackGenerationRef.current || clientRef.current !== client || disconnectingRef.current) return;
         startedSongRef.current = null;
+        if (usesAndroidAutoPlayer) {
+          const items = await Promise.all(songs.map(async (item, itemIndex) => {
+            const offline = offlineByKey.get(downloadKey(item, activeSourceKey));
+            const local = offline && (!!item.offlineSourceKey || !client || !connected || preferences.preferOffline);
+            return {
+              id: item.id, title: item.title, artist: item.artist, album: item.album, coverUrl: item.coverUrl,
+              uri: itemIndex === index ? uri : local ? offline.localUri : await client!.streamUrl(item.id),
+            };
+          }));
+          if (generation !== playbackGenerationRef.current || clientRef.current !== client || disconnectingRef.current) return;
+          await setAndroidAutoQueue(items, index, autoPlay);
+          await autoCommand('rate', preferences.defaultPlaybackRate);
+          await autoCommand('repeat', repeatRef.current === 'one' ? 1 : repeatRef.current === 'all' ? 2 : 0);
+          await autoCommand('shuffle', shuffleRef.current ? 1 : 0);
+          return;
+        }
         player.replace({ uri, name: song.title });
         if (preferences.backgroundPlayback) {
           player.setActiveForLockScreen(true, {
@@ -880,9 +888,11 @@ function MusicBankApp() {
             error instanceof Error ? error.message : String(error)
           }`,
         );
+      } finally {
+        if (generation === playbackGenerationRef.current) nativeLoadFinishedRef.current = Date.now();
       }
     },
-    [activeSourceKey, connected, offlineByKey, playWhenReady, player, preferences.backgroundPlayback, preferences.preferOffline, repeat],
+    [activeSourceKey, connected, offlineByKey, playWhenReady, player, preferences.backgroundPlayback, preferences.preferOffline, preferences.defaultPlaybackRate, repeat, autoCommand],
   );
 
   useEffect(() => {
@@ -914,6 +924,7 @@ function MusicBankApp() {
   }, [player, sleepUntil]);
 
   const playNext = useCallback(() => {
+    if (usesAndroidAutoPlayer) { void autoCommand('next').catch(() => {}); return; }
     const queued = queueRef.current;
     const next = nextQueueIndex({
       length: queued.length,
@@ -923,9 +934,10 @@ function MusicBankApp() {
     });
     if (next === null) return;
     void loadSong(queued, next);
-  }, [loadSong]);
+  }, [loadSong, autoCommand]);
 
   const playPrevious = useCallback(() => {
+    if (usesAndroidAutoPlayer) { void autoCommand('previous').catch(() => {}); return; }
     if (playerStatus.currentTime > 4) {
       void player.seekTo(0);
       return;
@@ -938,7 +950,7 @@ function MusicBankApp() {
       repeat: repeatRef.current,
     });
     void loadSong(queued, previous);
-  }, [loadSong, player, playerStatus.currentTime]);
+  }, [loadSong, player, playerStatus.currentTime, autoCommand]);
 
   useEffect(() => {
     const subscription = player.addListener('playbackStatusUpdate', (status) => {
@@ -1046,12 +1058,7 @@ function MusicBankApp() {
   useEffect(() => {
     if (!detail) return;
     const client = clientRef.current;
-    if (!client) {
-      if (detail.type === 'album') setDetailAlbum(albums.find((album) => album.id === detail.id) ?? null);
-      if (detail.type === 'artist') setDetailArtist(artists.find((artist) => artist.id === detail.id) ?? null);
-      if (detail.type === 'genre') setGenreSongs(songs.filter((song) => song.genre === detail.genre));
-      return;
-    }
+    if (!client) return;
     const abortController = new AbortController();
     setDetailBusy(true);
     setDetailAlbum(null);
@@ -1079,7 +1086,7 @@ function MusicBankApp() {
       if (!abortController.signal.aborted) setDetailBusy(false);
     });
     return () => abortController.abort();
-  }, [albums, artists, detail, songs]);
+  }, [detail]);
 
   function togglePlayback() {
     if (!currentSong) {
@@ -1091,53 +1098,33 @@ function MusicBankApp() {
     else player.play();
   }
 
-  function addToQueue(song: Song) {
-    setQueue((current) => appendToQueue(current, song));
-    setMessage(`${song.title} aggiunto alla coda.`);
-  }
-
-  function playNextInQueue(song: Song) {
-    setQueue((current) => insertNextInQueue(current, queueIndexRef.current, song));
-    setMessage(`${song.title} verrà riprodotto subito dopo.`);
+  async function enqueueSong(song: Song, next: boolean) {
+    try {
+      if (usesAndroidAutoPlayer) {
+        const stored = offlineByKey.get(downloadKey(song, activeSourceKey));
+        const local = stored && (!!song.offlineSourceKey || !clientRef.current || !connected || preferences.preferOffline);
+        if (!local && (!clientRef.current || !songBelongsToSource(song, activeSourceKey))) throw new Error('Collega il server di questo brano.');
+        const uri = local ? stored.localUri : await clientRef.current!.streamUrl(song.id);
+        nativeKnownSongsRef.current.set(song.id, song);
+        await editAndroidAutoQueue(next ? 'next' : 'append', 0, 0, { ...song, uri });
+      } else if (!queueRef.current.length) {
+        await loadSong([song], 0, false);
+      } else {
+        setQueue((items) => next ? insertNextInQueue(items, queueIndexRef.current, song) : appendToQueue(items, song));
+      }
+      setMessage(next ? `${song.title} verrà riprodotto subito dopo.` : `${song.title} aggiunto alla coda.`);
+    } catch (error) { setMessage(String(error)); }
   }
 
   function clearQueue() {
+    if (usesAndroidAutoPlayer) {
+      void editAndroidAutoQueue('keepCurrent').then(() => setMessage('Coda svuotata · il brano corrente continua.')).catch((error) => setMessage(String(error)));
+      return;
+    }
     const playingSong = queueRef.current[queueIndexRef.current];
-    if (playingSong) {
-      setQueue([playingSong]);
-      setQueueIndex(0);
-      setMessage('Brani successivi rimossi · la riproduzione continua.');
-      return;
-    }
-    setQueue([]);
-    setQueueIndex(-1);
-    setMessage('Coda svuotata.');
-  }
-
-  function removeFromQueue(index: number) {
-    const currentQueue = queueRef.current;
-    const currentIndex = queueIndexRef.current;
-    const nextQueue = removeQueueItem(currentQueue, index);
-    const nextIndex = removedQueueIndex(currentIndex, index, nextQueue.length);
-    if (!nextQueue.length) {
-      player.pause();
-      player.replace(null);
-      setQueue([]);
-      setQueueIndex(-1);
-      setMessage('Brano rimosso dalla coda.');
-      return;
-    }
-    if (index === currentIndex) {
-      void loadSong(nextQueue, nextIndex);
-      return;
-    }
-    setQueue(nextQueue);
-    setQueueIndex(nextIndex);
-  }
-
-  function reorderQueue(from: number, to: number) {
-    setQueue((current) => moveQueueItem(current, from, to));
-    setQueueIndex((current) => movedQueueIndex(current, from, to));
+    setQueue(playingSong ? [playingSong] : []);
+    setQueueIndex(playingSong ? 0 : -1);
+    setMessage('Coda svuotata · il brano corrente continua.');
   }
 
   async function toggleFavorite(song: Song) {
@@ -1159,6 +1146,9 @@ function MusicBankApp() {
       );
       const nextSongs = songs.map((item) => (item.id === song.id ? { ...item, starred } : item));
       setSongs(nextSongs);
+      void updateAndroidAutoFavorite(song.id, starred).catch(() =>
+        setMessage('Preferito aggiornato · catalogo Android Auto da aggiornare.'),
+      );
       void saveLibrary({
         albums,
         artists,
@@ -1244,9 +1234,9 @@ function MusicBankApp() {
       : detailAlbum?.name ?? detailArtist?.name ?? detailPlaylist?.name ?? '';
 
   return (
+    <QueueActionsContext.Provider value={{ onAdd: (song) => { void enqueueSong(song, false); } }}>
     <OfflineContext.Provider value={{ tracks: offlineByKey, jobs: downloadJobs, sourceKey: activeSourceKey,
       onDownload: requestDownload, onDownloadMany: (items) => items.forEach((song) => requestDownload(song, false)) }}>
-    <QueueActionsContext.Provider value={{ onAdd: addToQueue }}>
     <SafeAreaView style={styles.app} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
       <LinearGradient
@@ -1500,11 +1490,15 @@ function MusicBankApp() {
         onSeek={(seconds) => {
           if (Number.isFinite(seconds)) void player.seekTo(seconds);
         }}
-        onShuffle={() => setShuffle((value) => !value)}
+        onShuffle={() => {
+          if (usesAndroidAutoPlayer) void autoCommand('shuffle', shuffle ? 0 : 1).catch(() => {});
+          else setShuffle((value) => !value);
+        }}
         onRepeat={() => {
           const next = repeat === 'none' ? 'all' : repeat === 'all' ? 'one' : 'none';
           setRepeat(next);
-          player.loop = next === 'one';
+          if (usesAndroidAutoPlayer) void autoCommand('repeat', next === 'one' ? 1 : next === 'all' ? 2 : 0).catch(() => {});
+          else player.loop = next === 'one';
         }}
         onQueue={() => setQueueOpen(true)}
         onMore={() => {
@@ -1521,16 +1515,28 @@ function MusicBankApp() {
         currentIndex={queueIndex}
         onClose={() => setQueueOpen(false)}
         onPick={(index) => void loadSong(queue, index)}
-        onReorder={reorderQueue}
-        onRemove={removeFromQueue}
         onClear={clearQueue}
+        onReorder={(from, to) => {
+          if (usesAndroidAutoPlayer) void editAndroidAutoQueue('move', from, to).catch((error) => setMessage(String(error)));
+          else { setQueue(moveQueueItem(queue, from, to)); setQueueIndex(movedQueueIndex(queueIndex, from, to)); }
+        }}
+        onRemove={(index) => {
+          if (usesAndroidAutoPlayer) void editAndroidAutoQueue('remove', index).catch((error) => setMessage(String(error)));
+          else {
+            const next = removeQueueItem(queue, index);
+            const nextIndex = removedQueueIndex(queueIndex, index, next.length);
+            if (!next.length) { player.pause(); player.replace(null); setQueue([]); setQueueIndex(-1); }
+            else if (index === queueIndex) void loadSong(next, nextIndex, playerStatus.playing);
+            else { setQueue(next); setQueueIndex(nextIndex); }
+          }
+        }}
       />
       <EqualizerModal
+        sessionId={audioSessionId}
         visible={eqOpen}
         onClose={() => setEqOpen(false)}
-        sessionId={audioSessionId}
-        player={player}
-        trackKey={`${currentSong?.id ?? ''}:${playerStatus.isLoaded ? 'ready' : 'loading'}`}
+          player={player}
+          trackKey={`${currentSong?.id ?? ''}:${playerStatus.isLoaded ? 'ready' : 'loading'}`}
       />
       <MoreActionsModal
         visible={actionsOpen}
@@ -1546,6 +1552,14 @@ function MusicBankApp() {
         onEqualizer={() => {
           setActionsOpen(false);
           setEqOpen(true);
+        }}
+        onAppendQueue={() => {
+          if (actionTarget) void enqueueSong(actionTarget, false);
+          setActionsOpen(false);
+        }}
+        onPlayNext={() => {
+          if (actionTarget) void enqueueSong(actionTarget, true);
+          setActionsOpen(false);
         }}
         onSmartQueue={async () => {
           const extra = await clientRef.current?.getRandomSongs(50, actionTarget?.genre);
@@ -1563,16 +1577,6 @@ function MusicBankApp() {
         onAddPlaylist={() => {
           setActionsOpen(false);
           setPlaylistPickerOpen(true);
-        }}
-        onAddQueue={() => {
-          if (actionTarget) addToQueue(actionTarget);
-          setActionsOpen(false);
-          setActionSong(null);
-        }}
-        onPlayNext={() => {
-          if (actionTarget) playNextInQueue(actionTarget);
-          setActionsOpen(false);
-          setActionSong(null);
         }}
         onFavorite={() => {
           if (actionTarget) void toggleFavorite(actionTarget);
@@ -1780,8 +1784,8 @@ function MusicBankApp() {
         }}
       />
     </SafeAreaView>
-    </QueueActionsContext.Provider>
     </OfflineContext.Provider>
+    </QueueActionsContext.Provider>
   );
 }
 
@@ -3395,6 +3399,7 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
         <ScrollView
           ref={listRef}
           style={styles.queueList}
+          scrollEnabled={dragTarget === null}
         >
           {queue.map((song, index) => (
             <QueueRow
@@ -3418,27 +3423,32 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
 
 function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (index: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
   const targetRef = useRef(index);
+  const handlers = useRef({ index, count, onDragTarget, onReorder });
+  handlers.current = { index, count, onDragTarget, onReorder };
+  const origin = useRef({ index, count });
   const dragPan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: () => {
-      targetRef.current = index;
-      onDragTarget(index);
+      origin.current = { index: handlers.current.index, count: handlers.current.count };
+      targetRef.current = origin.current.index;
+      handlers.current.onDragTarget(origin.current.index);
     },
     onPanResponderMove: (_, gesture) => {
-      const targetIndex = Math.max(0, Math.min(count - 1, index + Math.round(gesture.dy / 58)));
+      const targetIndex = queueDropIndex(origin.current.index, origin.current.count, gesture.dy);
       if (targetRef.current !== targetIndex) {
         targetRef.current = targetIndex;
-        onDragTarget(targetIndex);
+        handlers.current.onDragTarget(targetIndex);
       }
     },
     onPanResponderRelease: () => {
       const targetIndex = targetRef.current;
-      onDragTarget(null);
-      if (targetIndex !== index) onReorder(index, targetIndex);
+      handlers.current.onDragTarget(null);
+      if (targetIndex !== origin.current.index) handlers.current.onReorder(origin.current.index, targetIndex);
     },
-    onPanResponderTerminate: () => onDragTarget(null),
-  }), [count, index, onDragTarget, onReorder]);
+    onPanResponderTerminate: () => handlers.current.onDragTarget(null),
+    onPanResponderTerminationRequest: () => false,
+  }), []);
   return (
     <SwipeRightAction onAction={() => onRemove(index)}>
     <Pressable style={[styles.queueRow, current && styles.queueRowOn, target && styles.queueRowTarget]} onPress={() => onPick(index)}>
@@ -3459,6 +3469,8 @@ function QueueRow({ song, index, count, current, target, onPick, onDragTarget, o
 function SwipeRightAction({ onAction, children }: { onAction: () => void; children: React.ReactNode }) {
   const [offset, setOffset] = useState(0);
   const swipedRef = useRef(false);
+  const actionRef = useRef(onAction);
+  actionRef.current = onAction;
   const pan = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gesture) => gesture.dx > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
     onMoveShouldSetPanResponderCapture: (_, gesture) => gesture.dx > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
@@ -3468,14 +3480,15 @@ function SwipeRightAction({ onAction, children }: { onAction: () => void; childr
     },
     onPanResponderRelease: (_, gesture) => {
       setOffset(0);
-      if (gesture.dx >= 72) onAction();
+      if (isQueueSwipe(gesture.dx, gesture.dy)) actionRef.current();
       setTimeout(() => { swipedRef.current = false; }, 120);
     },
     onPanResponderTerminate: () => {
       setOffset(0);
       setTimeout(() => { swipedRef.current = false; }, 120);
     },
-  }), [onAction]);
+    onPanResponderTerminationRequest: () => false,
+  }), []);
   const child = isValidElement<{ onPress?: (...args: unknown[]) => void }>(children)
     ? cloneElement(children, {
         onPress: (...args: unknown[]) => {
@@ -3496,6 +3509,7 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
   const [frequencies, setFrequencies] = useState([60, 230, 910, 3600, 14000]);
   const [range, setRange] = useState({ min: -1500, max: 1500 });
   const [notice, setNotice] = useState('');
+  const [settingsReady, setSettingsReady] = useState(false);
 
   useEffect(() => {
     void AsyncStorage.getItem(EQUALIZER_STORAGE_KEY).then((saved) => {
@@ -3503,7 +3517,7 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
       const parsed = JSON.parse(saved) as { enabled?: boolean; levels?: number[] };
       setEnabled(!!parsed.enabled);
       if (Array.isArray(parsed.levels) && parsed.levels.length) setLevels(parsed.levels);
-    }).catch(() => setNotice('Impostazioni equalizzatore non ripristinate.'));
+    }).catch(() => setNotice('Impostazioni equalizzatore non ripristinate.')).finally(() => setSettingsReady(true));
   }, []);
 
   useEffect(() => {
@@ -3519,12 +3533,13 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
   }, [sessionId]);
 
   useEffect(() => {
+    if (!settingsReady) return;
     const applied = Platform.OS === 'android'
       ? sessionId > 0 && !!GioConnectionStore && GioConnectionStore.configureEqualizer(sessionId, enabled, levels)
       : Platform.OS === 'web' && configureWebEqualizer(player, enabled, levels, frequencies);
     setNotice(applied ? '' : 'Equalizzatore non applicabile alla sessione audio.');
     void AsyncStorage.setItem(EQUALIZER_STORAGE_KEY, JSON.stringify({ enabled, levels }));
-  }, [enabled, frequencies, levels, player, sessionId, trackKey]);
+  }, [enabled, frequencies, levels, player, sessionId, settingsReady, trackKey]);
 
   if (!visible) return null;
   return (
@@ -3571,17 +3586,19 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
 function EqualizerBand({ frequency, value, min, max, disabled, onChange }: { frequency: number; value: number; min: number; max: number; disabled: boolean; onChange: (value: number) => void }) {
   const height = 190;
   const startValueRef = useRef(value);
+  const live = useRef({ value, min, max, disabled, onChange });
+  live.current = { value, min, max, disabled, onChange };
   const pan = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => !disabled,
-    onStartShouldSetPanResponderCapture: () => !disabled,
-    onMoveShouldSetPanResponder: (_, gesture) => !disabled && Math.abs(gesture.dy) > 2,
-    onMoveShouldSetPanResponderCapture: (_, gesture) => !disabled && Math.abs(gesture.dy) > 2,
-    onPanResponderGrant: () => { startValueRef.current = value; },
+    onStartShouldSetPanResponder: () => !live.current.disabled,
+    onStartShouldSetPanResponderCapture: () => !live.current.disabled,
+    onMoveShouldSetPanResponder: (_, gesture) => !live.current.disabled && Math.abs(gesture.dy) > 2,
+    onMoveShouldSetPanResponderCapture: (_, gesture) => !live.current.disabled && Math.abs(gesture.dy) > 2,
+    onPanResponderGrant: () => { startValueRef.current = live.current.value; },
     onPanResponderMove: (_, gesture) => {
-      onChange(equalizerLevelAfterDrag(startValueRef.current, gesture.dy, height, min, max));
+      live.current.onChange(equalizerLevelAfterDrag(startValueRef.current, gesture.dy, height, live.current.min, live.current.max));
     },
     onPanResponderTerminationRequest: () => false,
-  }), [disabled, max, min, onChange, value]);
+  }), []);
   const ratio = max === min ? 0.5 : (value - min) / (max - min);
   return (
     <View style={[styles.eqBand, disabled && { opacity: 0.4 }]} {...pan.panHandlers}>
@@ -3692,11 +3709,11 @@ function MoreActionsModal({
   onClose,
   onSleep,
   onEqualizer,
+  onAppendQueue,
+  onPlayNext,
   onSmartQueue,
   onMix,
   onAddPlaylist,
-  onAddQueue,
-  onPlayNext,
   onFavorite,
   onAlbum,
   onArtist,
@@ -3710,11 +3727,11 @@ function MoreActionsModal({
   onClose: () => void;
   onSleep: () => void;
   onEqualizer: () => void;
+  onAppendQueue: () => void;
+  onPlayNext: () => void;
   onSmartQueue: () => void;
   onMix: () => void;
   onAddPlaylist: () => void;
-  onAddQueue: () => void;
-  onPlayNext: () => void;
   onFavorite: () => void;
   onAlbum: () => void;
   onArtist: () => void;
@@ -3730,12 +3747,12 @@ function MoreActionsModal({
   const job = jobs[key];
   const serverActionsEnabled = songBelongsToSource(song, sourceKey);
   const actions: Array<[IconName, string, () => void, boolean?]> = [
+    ['playlist-plus', 'Aggiungi alla coda', onAppendQueue],
+    ['skip-next', 'Riproduci subito dopo', onPlayNext],
     ['timer-sand', 'Timer di riproduzione', onSleep],
     ['playlist-play', 'Smart flow · Smart queue', onSmartQueue, !serverActionsEnabled],
     ['creation', 'Mix istantaneo', onMix, !serverActionsEnabled],
     ['tune-variant', 'Equalizzatore · DSP', onEqualizer],
-    ['playlist-plus', 'Aggiungi alla coda', onAddQueue],
-    ['skip-next', 'Riproduci subito dopo', onPlayNext],
     [song.starred ? 'heart' : 'heart-outline', song.starred ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti', onFavorite, !serverActionsEnabled],
     ['playlist-plus', 'Aggiungi alla playlist', onAddPlaylist, !serverActionsEnabled],
     ['album', `Vai all’album · ${song.album ?? ''}`, onAlbum, !song.albumId || !serverActionsEnabled],
@@ -3873,6 +3890,7 @@ function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
   onSave: (draft: PlaylistDraft) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
+  const { onAdd } = useContext(QueueActionsContext);
   const [name, setName] = useState('');
   const [comment, setComment] = useState('');
   const [isPublic, setIsPublic] = useState(false);
@@ -3966,7 +3984,8 @@ function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
 
           <SectionTitle title="Ordine dei brani" subtitle={`${draftSongs.length} nella playlist`} />
           {draftSongs.map((song, index) => (
-            <View key={`${song.id}-${index}`} style={styles.playlistEditRow}>
+            <SwipeRightAction key={`${song.id}-${index}`} onAction={() => { if (!busy) onAdd(song); }}>
+            <View style={styles.playlistEditRow}>
               <Text style={styles.trackNumber}>{index + 1}</Text>
               <View style={styles.trackCopy}>
                 <Text numberOfLines={1} style={styles.trackTitle}>{song.title}</Text>
@@ -3982,6 +4001,7 @@ function ManagePlaylistModal({ visible, playlist, onClose, onSave, onDelete }: {
                 <MaterialCommunityIcons name="delete-outline" size={20} color="#FF7B8B" />
               </Pressable>
             </View>
+            </SwipeRightAction>
           ))}
           {!draftSongs.length && <PlaylistEmptyRow icon="playlist-remove" text="La playlist è vuota. Potrai aggiungere brani dal menu Più azioni." />}
           {!!error && <Text style={styles.playlistError}>{error}</Text>}
@@ -4135,6 +4155,18 @@ function formatSamplingRate(rate: number): string {
 }
 
 const styles = StyleSheet.create({
+  eqResetText: { color: '#D7D5DD', fontSize: 11, fontWeight: '800' },
+  eqReset: { alignSelf: 'center', minHeight: 42, borderRadius: 13, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1A1921', borderWidth: 1, borderColor: '#302E39' },
+  eqThumb: { position: 'absolute', left: 2, width: 30, height: 8, marginBottom: -4, borderRadius: 4, backgroundColor: lime, borderWidth: 1, borderColor: '#F4FFD0' },
+  eqFill: { width: '100%', borderRadius: 17, backgroundColor: '#788E31' },
+  eqRail: { width: 34, height: 190, borderRadius: 17, backgroundColor: '#25232D', overflow: 'visible', justifyContent: 'flex-end' },
+  eqBands: { minHeight: 245, marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 8 },
+  swipeHost: { position: 'relative', overflow: 'hidden', borderRadius: 13 },
+  queueDragHandle: { width: 34, height: 46, alignItems: 'center', justifyContent: 'center' },
+  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime },
+  queueClearText: { color: '#FF9A9A', fontSize: 11, fontWeight: '900' },
+  queueClearButton: { minHeight: 40, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#25191D', borderWidth: 1, borderColor: '#4A272F' },
+  queueHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   app: { flex: 1, backgroundColor: '#07080C' },
   shell: { flex: 1, flexDirection: 'row' },
   content: { flex: 1, minWidth: 0 },
@@ -4344,25 +4376,11 @@ const styles = StyleSheet.create({
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 1, maxHeight: '78%', backgroundColor: '#121118', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 14 },
   queueSheet: { height: '72%' },
   queueList: { flex: 1, cursor: 'pointer' },
-  queueHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  queueClearButton: { minHeight: 40, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#25191D', borderWidth: 1, borderColor: '#4A272F' },
-  queueClearText: { color: '#FF9A9A', fontSize: 11, fontWeight: '900' },
   sheetHandle: { width: 45, height: 4, borderRadius: 2, backgroundColor: '#4C4A55', alignSelf: 'center', marginBottom: 20 },
   sheetTitle: { color: '#F4F3F7', fontWeight: '900', fontSize: 21 },
   sheetSubtitle: { color: '#777580', fontSize: 10, marginTop: 4, marginBottom: 14 },
   queueRow: { minHeight: 58, borderRadius: 13, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 12 },
   queueRowOn: { backgroundColor: '#211F2B' },
-  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime },
-  queueDragHandle: { width: 34, height: 46, alignItems: 'center', justifyContent: 'center' },
-  swipeHost: { position: 'relative', overflow: 'hidden', borderRadius: 13 },
-  eqButton: { minHeight: 48, borderRadius: 14, backgroundColor: lime, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 18 },
-  eqButtonText: { color: '#10130B', fontSize: 13, fontWeight: '900' },
-  eqBands: { minHeight: 245, marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 8 },
-  eqRail: { width: 34, height: 190, borderRadius: 17, backgroundColor: '#25232D', overflow: 'visible', justifyContent: 'flex-end' },
-  eqFill: { width: '100%', borderRadius: 17, backgroundColor: '#788E31' },
-  eqThumb: { position: 'absolute', left: 2, width: 30, height: 8, marginBottom: -4, borderRadius: 4, backgroundColor: lime, borderWidth: 1, borderColor: '#F4FFD0' },
-  eqReset: { alignSelf: 'center', minHeight: 42, borderRadius: 13, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1A1921', borderWidth: 1, borderColor: '#302E39' },
-  eqResetText: { color: '#D7D5DD', fontSize: 11, fontWeight: '800' },
   eqSheet: { maxHeight: '90%' },
   actionsSheet: { maxHeight: '86%' },
   actionRow: { minHeight: 61, borderRadius: 15, backgroundColor: '#1A1921', marginBottom: 7, paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', gap: 13 },
