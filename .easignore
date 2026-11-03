@@ -9,6 +9,7 @@ android/app/build
 design/*preview.png
 tools/*
 !tools/patch-expo-audio.mjs
+!tools/patch-android-dependencies.mjs
 *.log
 *.tsbuildinfo
 credentials.json

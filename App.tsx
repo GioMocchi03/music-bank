@@ -37,6 +37,8 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type ScrollViewInstance,
+  type ViewInstance,
 } from 'react-native';
 import {
   SafeAreaProvider,
@@ -3305,7 +3307,7 @@ function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showA
 function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; value: number; duration: number; onSeek: (seconds: number) => void }) {
   const [width, setWidth] = useState(0);
   const widthRef = useRef(0);
-  const hostRef = useRef<View>(null);
+  const hostRef = useRef<ViewInstance>(null);
   const durationRef = useRef(duration);
   const onSeekRef = useRef(onSeek);
   durationRef.current = duration;
@@ -3372,7 +3374,7 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
 }
 
 function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
-  const listRef = useRef<ScrollView>(null);
+  const listRef = useRef<ScrollViewInstance>(null);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
   if (!visible) return null;
   return (
