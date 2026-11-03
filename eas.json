@@ -9,9 +9,11 @@
       "android": {
         "buildType": "apk",
         "image": "latest"
-      }
+      },
+      "channel": "preview"
     },
     "production": {
+      "channel": "production",
       "android": {
         "buildType": "app-bundle"
       }

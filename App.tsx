@@ -10,6 +10,7 @@ import {
   useAudioPlayerStatus,
 } from 'expo-audio';
 import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import {
   createContext,
   cloneElement,
@@ -2896,6 +2897,7 @@ function SettingsScreen({
 
 function UpdateSettings() {
   const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState('');
   const [release, setRelease] = useState<GithubRelease | null>(null);
 
@@ -2926,6 +2928,30 @@ function UpdateSettings() {
     return () => { active = false; };
   }, [check]);
 
+  const applyOverTheAirUpdate = useCallback(async () => {
+    if (!Updates.isEnabled) {
+      setStatus('Aggiornamenti automatici non disponibili in questa build.');
+      return;
+    }
+    setApplying(true);
+    setStatus('Controllo aggiornamento dell’app…');
+    try {
+      const result = await Updates.checkForUpdateAsync();
+      if (!result.isAvailable) {
+        setStatus('L’app è già aggiornata.');
+        return;
+      }
+      setStatus('Scaricamento aggiornamento…');
+      await Updates.fetchUpdateAsync();
+      setStatus('Aggiornamento scaricato. Riavvio dell’app…');
+      await Updates.reloadAsync();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Aggiornamento non riuscito.');
+    } finally {
+      setApplying(false);
+    }
+  }, []);
+
   return (
     <View style={styles.settingsActionGroup}>
       <SettingsActionRow icon="cellphone-check" title="Versione installata" subtitle={`Music Bank ${APP_VERSION} · build ${APP_BUILD}`} value="Installata" onPress={() => {}} />
@@ -2935,6 +2961,10 @@ function UpdateSettings() {
         <Pressable disabled={checking} style={[styles.syncButton, checking && styles.buttonDisabled]} onPress={() => void check()}>
           {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
           <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Controlla aggiornamenti'}</Text>
+        </Pressable>
+        <Pressable disabled={checking || applying} style={[styles.syncButton, (checking || applying) && styles.buttonDisabled]} onPress={() => void applyOverTheAirUpdate()}>
+          {applying ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="download-circle" size={21} color="#10130B" />}
+          <Text style={styles.syncButtonText}>{applying ? 'Aggiornamento…' : 'Scarica aggiornamento app'}</Text>
         </Pressable>
         {!!status && <Text style={styles.statusText}>{status}</Text>}
       </View>
