@@ -10,6 +10,7 @@ import {
   useAudioPlayerStatus,
 } from 'expo-audio';
 import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import {
   createContext,
   cloneElement,
@@ -37,6 +38,8 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type ScrollViewInstance,
+  type ViewInstance,
 } from 'react-native';
 import {
   SafeAreaProvider,
@@ -53,6 +56,7 @@ import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
+import { startupMark } from './src/utils/startupMetrics';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
@@ -380,6 +384,7 @@ function MusicBankApp() {
 
   useEffect(() => {
     let active = true;
+    startupMark('bootstrap-start');
     const connectionPromise = loadConnection();
     const previewPromise = loadLibraryPreview();
     const historyPromise = loadHistory();
@@ -451,12 +456,14 @@ function MusicBankApp() {
         setMessage(
           `${preview.albums.length} album dalla cache · caricamento tracce in background…`,
         );
+        startupMark('preview-visible');
       }
       // Seconda fase non bloccante: completa ricerca, tracce e Android Auto.
       await loadLibrary().then(async (snapshot) => {
         if (!active || !snapshot || !saved) return;
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
         setSongs(snapshot.songs);
+        startupMark('library-loaded');
         if (saved) {
           await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot).catch(() => {
             // Il catalogo Auto verrà rigenerato alla prossima sincronizzazione completa.
@@ -471,7 +478,10 @@ function MusicBankApp() {
         setMessage(error instanceof Error ? error.message : 'Errore durante il ripristino locale');
       }
     }).finally(() => {
-      if (active) setBootstrapReady(true);
+      if (active) {
+        setBootstrapReady(true);
+        startupMark('first-screen-ready');
+      }
     });
     return () => {
       active = false;
@@ -2894,6 +2904,7 @@ function SettingsScreen({
 
 function UpdateSettings() {
   const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState('');
   const [release, setRelease] = useState<GithubRelease | null>(null);
 
@@ -2924,6 +2935,30 @@ function UpdateSettings() {
     return () => { active = false; };
   }, [check]);
 
+  const applyOverTheAirUpdate = useCallback(async () => {
+    if (!Updates.isEnabled) {
+      setStatus('Aggiornamenti automatici non disponibili in questa build.');
+      return;
+    }
+    setApplying(true);
+    setStatus('Controllo aggiornamento dell’app…');
+    try {
+      const result = await Updates.checkForUpdateAsync();
+      if (!result.isAvailable) {
+        setStatus('L’app è già aggiornata.');
+        return;
+      }
+      setStatus('Scaricamento aggiornamento…');
+      await Updates.fetchUpdateAsync();
+      setStatus('Aggiornamento scaricato. Riavvio dell’app…');
+      await Updates.reloadAsync();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Aggiornamento non riuscito.');
+    } finally {
+      setApplying(false);
+    }
+  }, []);
+
   return (
     <View style={styles.settingsActionGroup}>
       <SettingsActionRow icon="cellphone-check" title="Versione installata" subtitle={`Music Bank ${APP_VERSION} · build ${APP_BUILD}`} value="Installata" onPress={() => {}} />
@@ -2933,6 +2968,10 @@ function UpdateSettings() {
         <Pressable disabled={checking} style={[styles.syncButton, checking && styles.buttonDisabled]} onPress={() => void check()}>
           {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
           <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Controlla aggiornamenti'}</Text>
+        </Pressable>
+        <Pressable disabled={checking || applying} style={[styles.syncButton, (checking || applying) && styles.buttonDisabled]} onPress={() => void applyOverTheAirUpdate()}>
+          {applying ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="download-circle" size={21} color="#10130B" />}
+          <Text style={styles.syncButtonText}>{applying ? 'Aggiornamento…' : 'Scarica aggiornamento app'}</Text>
         </Pressable>
         {!!status && <Text style={styles.statusText}>{status}</Text>}
       </View>
@@ -3305,7 +3344,7 @@ function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showA
 function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; value: number; duration: number; onSeek: (seconds: number) => void }) {
   const [width, setWidth] = useState(0);
   const widthRef = useRef(0);
-  const hostRef = useRef<View>(null);
+  const hostRef = useRef<ViewInstance>(null);
   const durationRef = useRef(duration);
   const onSeekRef = useRef(onSeek);
   durationRef.current = duration;
@@ -3372,8 +3411,48 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
 }
 
 function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
-  const listRef = useRef<ScrollView>(null);
+  const listRef = useRef<ScrollViewInstance>(null);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
+  const [visualQueue, setVisualQueue] = useState(queue);
+  const dragOriginRef = useRef<number | null>(null);
+  const dragVisualIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (dragTarget === null) setVisualQueue(queue);
+  }, [queue, dragTarget]);
+  const handleDragTarget = useCallback((from: number, target: number | null) => {
+    if (target === null) {
+      dragOriginRef.current = null;
+      dragVisualIndexRef.current = null;
+      setDragTarget(null);
+      return;
+    }
+    if (dragOriginRef.current === null) {
+      dragOriginRef.current = from;
+      dragVisualIndexRef.current = from;
+    }
+    const current = dragVisualIndexRef.current ?? from;
+    if (current !== target) {
+      setVisualQueue((items) => {
+        const next = items.slice();
+        const [moved] = next.splice(current, 1);
+        next.splice(target, 0, moved);
+        return next;
+      });
+      dragVisualIndexRef.current = target;
+    }
+    if (target <= 1) {
+      listRef.current?.scrollTo({ y: Math.max(0, (target - 1) * 58), animated: true });
+    } else if (target >= queue.length - 2) {
+      listRef.current?.scrollToEnd({ animated: true });
+    }
+    setDragTarget(target);
+  }, [queue.length]);
+  const handleReorder = useCallback((from: number, to: number) => {
+    dragOriginRef.current = null;
+    dragVisualIndexRef.current = null;
+    setDragTarget(null);
+    if (from !== to) onReorder(from, to);
+  }, [onReorder]);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
@@ -3397,17 +3476,17 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
           style={styles.queueList}
           scrollEnabled={dragTarget === null}
         >
-          {queue.map((song, index) => (
+          {visualQueue.map((song, index) => (
             <QueueRow
-              key={`${song.id}-${index}`}
+              key={song.id}
               song={song}
               index={index}
               count={queue.length}
               current={index === currentIndex}
               target={index === dragTarget}
               onPick={onPick}
-              onDragTarget={setDragTarget}
-              onReorder={onReorder}
+              onDragTarget={handleDragTarget}
+              onReorder={handleReorder}
               onRemove={onRemove}
             />
           ))}
@@ -3417,7 +3496,7 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
   );
 }
 
-function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (index: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
+function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (from: number, target: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
   const targetRef = useRef(index);
   const handlers = useRef({ index, count, onDragTarget, onReorder });
   handlers.current = { index, count, onDragTarget, onReorder };
@@ -3428,21 +3507,21 @@ function QueueRow({ song, index, count, current, target, onPick, onDragTarget, o
     onPanResponderGrant: () => {
       origin.current = { index: handlers.current.index, count: handlers.current.count };
       targetRef.current = origin.current.index;
-      handlers.current.onDragTarget(origin.current.index);
+      handlers.current.onDragTarget(origin.current.index, origin.current.index);
     },
     onPanResponderMove: (_, gesture) => {
       const targetIndex = queueDropIndex(origin.current.index, origin.current.count, gesture.dy);
       if (targetRef.current !== targetIndex) {
         targetRef.current = targetIndex;
-        handlers.current.onDragTarget(targetIndex);
+        handlers.current.onDragTarget(origin.current.index, targetIndex);
       }
     },
     onPanResponderRelease: () => {
       const targetIndex = targetRef.current;
-      handlers.current.onDragTarget(null);
+      handlers.current.onDragTarget(origin.current.index, null);
       if (targetIndex !== origin.current.index) handlers.current.onReorder(origin.current.index, targetIndex);
     },
-    onPanResponderTerminate: () => handlers.current.onDragTarget(null),
+    onPanResponderTerminate: () => handlers.current.onDragTarget(origin.current.index, null),
     onPanResponderTerminationRequest: () => false,
   }), []);
   return (
@@ -4158,7 +4237,7 @@ const styles = StyleSheet.create({
   eqBands: { minHeight: 245, marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 8 },
   swipeHost: { position: 'relative', overflow: 'hidden', borderRadius: 13 },
   queueDragHandle: { width: 34, height: 46, alignItems: 'center', justifyContent: 'center' },
-  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime },
+  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime, elevation: 8, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
   queueClearText: { color: '#FF9A9A', fontSize: 11, fontWeight: '900' },
   queueClearButton: { minHeight: 40, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#25191D', borderWidth: 1, borderColor: '#4A272F' },
   queueHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
