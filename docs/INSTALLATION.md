@@ -25,6 +25,8 @@ senza account o token e apre la pagina di download quando è disponibile un APK 
 recente. Le release taggate `vX.Y.Z` vengono create automaticamente da GitHub Actions
 con APK e checksum, usando il secret repository `EXPO_TOKEN`.
 
+Per abilitare gli aggiornamenti OTA automatici: crea un token con `eas token:create`, poi aggiungilo su GitHub in **Settings → Secrets and variables → Actions → New repository secret**, con nome `EXPO_TOKEN`. Il valore è sensibile e non va inserito nel repository. Senza questo secret il workflow si interrompe intenzionalmente prima di pubblicare l’update.
+
 Gli aggiornamenti JavaScript vengono pubblicati sul canale Expo `production` dopo il
 merge su `main` e possono essere scaricati da **Impostazioni → Aggiornamenti**. Le
 modifiche native, tra cui Android Auto e librerie Android, richiedono una nuova APK
