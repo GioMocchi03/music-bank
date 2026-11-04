@@ -56,6 +56,7 @@ import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
+import { startupMark } from './src/utils/startupMetrics';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
@@ -383,6 +384,7 @@ function MusicBankApp() {
 
   useEffect(() => {
     let active = true;
+    startupMark('bootstrap-start');
     const connectionPromise = loadConnection();
     const previewPromise = loadLibraryPreview();
     const historyPromise = loadHistory();
@@ -454,12 +456,14 @@ function MusicBankApp() {
         setMessage(
           `${preview.albums.length} album dalla cache · caricamento tracce in background…`,
         );
+        startupMark('preview-visible');
       }
       // Seconda fase non bloccante: completa ricerca, tracce e Android Auto.
       await loadLibrary().then(async (snapshot) => {
         if (!active || !snapshot || !saved) return;
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
         setSongs(snapshot.songs);
+        startupMark('library-loaded');
         if (saved) {
           await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot).catch(() => {
             // Il catalogo Auto verrà rigenerato alla prossima sincronizzazione completa.
@@ -474,7 +478,10 @@ function MusicBankApp() {
         setMessage(error instanceof Error ? error.message : 'Errore durante il ripristino locale');
       }
     }).finally(() => {
-      if (active) setBootstrapReady(true);
+      if (active) {
+        setBootstrapReady(true);
+        startupMark('first-screen-ready');
+      }
     });
     return () => {
       active = false;
