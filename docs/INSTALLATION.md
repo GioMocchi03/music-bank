@@ -20,9 +20,15 @@ e il numero di build deve aumentare. Non disinstallare per risolvere un errore s
 considerare la perdita di dati locali e download. Un APK di sviluppo o firmato da
 terzi non può aggiornare direttamente la release ufficiale.
 
-Notifiche GitHub: **Watch → Custom → Releases**. Dalla 1.3.9 l'app controlla la
-release pubblica senza account o token e apre la pagina di download. Non sono abilitati
-aggiornamenti JavaScript OTA. I download locali non sono un backup.
+Notifiche GitHub: **Watch → Custom → Releases**. L'app controlla la release pubblica
+senza account o token e apre la pagina di download quando è disponibile un APK più
+recente. Le release taggate `vX.Y.Z` vengono create automaticamente da GitHub Actions
+con APK e checksum, usando il secret repository `EXPO_TOKEN`.
+
+Gli aggiornamenti JavaScript vengono pubblicati sul canale Expo `production` dopo il
+merge su `main` e possono essere scaricati da **Impostazioni → Aggiornamenti**. Le
+modifiche native, tra cui Android Auto e librerie Android, richiedono una nuova APK
+della release automatica. I download locali non sono un backup.
 
 ## Verifica del file
 
