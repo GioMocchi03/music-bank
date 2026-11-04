@@ -3406,6 +3406,41 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
 function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
   const listRef = useRef<ScrollViewInstance>(null);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
+  const [visualQueue, setVisualQueue] = useState(queue);
+  const dragOriginRef = useRef<number | null>(null);
+  const dragVisualIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (dragTarget === null) setVisualQueue(queue);
+  }, [queue, dragTarget]);
+  const handleDragTarget = useCallback((from: number, target: number | null) => {
+    if (target === null) {
+      dragOriginRef.current = null;
+      dragVisualIndexRef.current = null;
+      setDragTarget(null);
+      return;
+    }
+    if (dragOriginRef.current === null) {
+      dragOriginRef.current = from;
+      dragVisualIndexRef.current = from;
+    }
+    const current = dragVisualIndexRef.current ?? from;
+    if (current !== target) {
+      setVisualQueue((items) => {
+        const next = items.slice();
+        const [moved] = next.splice(current, 1);
+        next.splice(target, 0, moved);
+        return next;
+      });
+      dragVisualIndexRef.current = target;
+    }
+    setDragTarget(target);
+  }, []);
+  const handleReorder = useCallback((from: number, to: number) => {
+    dragOriginRef.current = null;
+    dragVisualIndexRef.current = null;
+    setDragTarget(null);
+    if (from !== to) onReorder(from, to);
+  }, [onReorder]);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
@@ -3429,17 +3464,17 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
           style={styles.queueList}
           scrollEnabled={dragTarget === null}
         >
-          {queue.map((song, index) => (
+          {visualQueue.map((song, index) => (
             <QueueRow
-              key={`${song.id}-${index}`}
+              key={song.id}
               song={song}
               index={index}
               count={queue.length}
               current={index === currentIndex}
               target={index === dragTarget}
               onPick={onPick}
-              onDragTarget={setDragTarget}
-              onReorder={onReorder}
+              onDragTarget={handleDragTarget}
+              onReorder={handleReorder}
               onRemove={onRemove}
             />
           ))}
@@ -3449,7 +3484,7 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
   );
 }
 
-function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (index: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
+function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (from: number, target: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
   const targetRef = useRef(index);
   const handlers = useRef({ index, count, onDragTarget, onReorder });
   handlers.current = { index, count, onDragTarget, onReorder };
@@ -3460,21 +3495,21 @@ function QueueRow({ song, index, count, current, target, onPick, onDragTarget, o
     onPanResponderGrant: () => {
       origin.current = { index: handlers.current.index, count: handlers.current.count };
       targetRef.current = origin.current.index;
-      handlers.current.onDragTarget(origin.current.index);
+      handlers.current.onDragTarget(origin.current.index, origin.current.index);
     },
     onPanResponderMove: (_, gesture) => {
       const targetIndex = queueDropIndex(origin.current.index, origin.current.count, gesture.dy);
       if (targetRef.current !== targetIndex) {
         targetRef.current = targetIndex;
-        handlers.current.onDragTarget(targetIndex);
+        handlers.current.onDragTarget(origin.current.index, targetIndex);
       }
     },
     onPanResponderRelease: () => {
       const targetIndex = targetRef.current;
-      handlers.current.onDragTarget(null);
+      handlers.current.onDragTarget(origin.current.index, null);
       if (targetIndex !== origin.current.index) handlers.current.onReorder(origin.current.index, targetIndex);
     },
-    onPanResponderTerminate: () => handlers.current.onDragTarget(null),
+    onPanResponderTerminate: () => handlers.current.onDragTarget(origin.current.index, null),
     onPanResponderTerminationRequest: () => false,
   }), []);
   return (
