@@ -18,7 +18,7 @@
   "main": "index.ts",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
-    "@react-native-async-storage/async-storage": "~2.2.0",
+    "@react-native-async-storage/async-storage": "^3.1.1",
     "@tauri-apps/api": "^2.12.4",
     "expo": "~58.0.23",
     "expo-asset": "~58.0.20",
@@ -67,6 +67,9 @@
     "check": "npm run check:version && npm run check:docs && npm run typecheck && npm test"
   },
   "expo": {
+    "install": {
+      "exclude": ["@react-native-async-storage/async-storage"]
+    },
     "doctor": {
       "appConfigFieldsNotSyncedCheck": {
         "enabled": false

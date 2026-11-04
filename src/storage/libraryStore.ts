@@ -289,7 +289,7 @@ export async function saveLibrary(
 }
 
 export async function clearLibrary(): Promise<void> {
-  await Promise.all([WEB_KEY, LEGACY_KEY].map((key) => AsyncStorage.removeItem(key)));
+  await AsyncStorage.removeMany([WEB_KEY, LEGACY_KEY]);
   if (Platform.OS === 'web') return;
   const legacyFile = new File(Paths.document, LEGACY_FILE_NAME);
   if (legacyFile.exists) legacyFile.delete();
