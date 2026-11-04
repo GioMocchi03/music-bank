@@ -3440,8 +3440,13 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
       });
       dragVisualIndexRef.current = target;
     }
+    if (target <= 1) {
+      listRef.current?.scrollTo({ y: Math.max(0, (target - 1) * 58), animated: true });
+    } else if (target >= queue.length - 2) {
+      listRef.current?.scrollToEnd({ animated: true });
+    }
     setDragTarget(target);
-  }, []);
+  }, [queue.length]);
   const handleReorder = useCallback((from: number, to: number) => {
     dragOriginRef.current = null;
     dragVisualIndexRef.current = null;
@@ -4232,7 +4237,7 @@ const styles = StyleSheet.create({
   eqBands: { minHeight: 245, marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 8 },
   swipeHost: { position: 'relative', overflow: 'hidden', borderRadius: 13 },
   queueDragHandle: { width: 34, height: 46, alignItems: 'center', justifyContent: 'center' },
-  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime },
+  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime, elevation: 8, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
   queueClearText: { color: '#FF9A9A', fontSize: 11, fontWeight: '900' },
   queueClearButton: { minHeight: 40, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#25191D', borderWidth: 1, borderColor: '#4A272F' },
   queueHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
