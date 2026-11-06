@@ -12,12 +12,14 @@ import java.io.File
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class AutoCatalogueTest {
   private val json = """{
-    "albums":[{"id":"a","name":"Test Album","artist":"Test Artist","artistId":"r"}],
+    "albums":[{"id":"a","name":"Test Album","artist":"Test Artist","artistId":"r","year":1981}],
     "artists":[{"id":"r","name":"Test Artist"}],
     "genres":[{"value":"Hip-Hop","sourceValues":["Raw Rap"]}],
+    "playlists":[{"id":"p1","name":"Mix","owner":"demo","songIds":["two","one"]}],
+    "radios":[{"id":"st1","name":"Station","streamUrl":"https://radio.test/stream","homePageUrl":"https://radio.test"}],
     "songs":[
-      {"id":"one","title":"First Track","album":"Test Album","albumId":"a","artist":"Test Artist","artistId":"r","genre":"Raw Rap","starred":"now","track":1,"streamUrl":"https://example.test/one?auth=original"},
-      {"id":"two","title":"Second Track","album":"Test Album","albumId":"a","artist":"Test Artist","artistId":"r","genre":"Raw Rap","track":2,"streamUrl":"https://example.test/two"}
+      {"id":"one","title":"First Track","album":"Test Album","albumId":"a","artist":"Test Artist","artistId":"r","genre":"Raw Rap","starred":"now","track":1,"year":1981,"streamUrl":"https://example.test/one?auth=original"},
+      {"id":"two","title":"Second Track","album":"Test Album","albumId":"a","artist":"Test Artist","artistId":"r","genre":"Raw Rap","track":2,"year":1981,"streamUrl":"https://example.test/two"}
     ]
   }"""
   private fun file(): File = File.createTempFile("auto-catalog", ".json").apply { writeText(json); deleteOnExit() }
@@ -45,6 +47,47 @@ class AutoCatalogueTest {
     assertEquals("song:one", favorite.mediaId)
     assertEquals("https://example.test/one?auth=original", favorite.localConfiguration!!.uri.toString())
     assertEquals(listOf("song:one", "song:two"), catalog.playbackContext(favorite.mediaId).map { it.mediaId })
+  }
+
+  @Test fun collectionsMirrorThePhoneLibraryHub() {
+    val catalog = MusicBankAutoService.AutoCatalogue().apply { load(file()) }
+    assertEquals(
+      listOf("music-bank-albums", "music-bank-artists", "music-bank-tracks", "music-bank-collections"),
+      catalog.children("music-bank-root").map { it.mediaId },
+    )
+    assertEquals(
+      listOf("music-bank-genres", "music-bank-favorites", "music-bank-playlists", "music-bank-radios", "music-bank-years"),
+      catalog.children("music-bank-collections").map { it.mediaId },
+    )
+    // Playlist order and radio stations survive as playable, container-scoped entries.
+    assertEquals(
+      listOf("playlist:p1:song:two", "playlist:p1:song:one"),
+      catalog.children("playlist:p1").map { it.mediaId },
+    )
+    assertEquals(
+      listOf("song:two", "song:one"),
+      catalog.playbackContext("playlist:p1:song:two").map { it.mediaId },
+    )
+    val station = catalog.children("music-bank-radios").single()
+    assertEquals("radio:st1", station.mediaId)
+    assertEquals("https://radio.test/stream", station.localConfiguration!!.uri.toString())
+    assertEquals(listOf(station.mediaId), catalog.playbackContext("radio:st1").map { it.mediaId })
+    assertEquals(listOf("album:a"), catalog.children("year:1981").map { it.mediaId })
+    assertTrue(catalog.search("Mix").any { it.mediaId == "playlist:p1" })
+    assertTrue(catalog.search("Station").any { it.mediaId == "radio:st1" })
+  }
+
+  @Test fun legacyCataloguesWithoutCollectionsStillWork() {
+    val legacy = File.createTempFile("auto-legacy", ".json").apply {
+      writeText("""{"songs":[{"id":"old","title":"Legacy","streamUrl":"https://example.test/old","year":1990}]}""")
+      deleteOnExit()
+    }
+    val catalog = MusicBankAutoService.AutoCatalogue().apply { load(legacy) }
+    assertEquals(
+      listOf("music-bank-genres", "music-bank-years"),
+      catalog.children("music-bank-collections").map { it.mediaId },
+    )
+    assertEquals(listOf("song:old"), catalog.children("year:1990").map { it.mediaId })
   }
 
   @Test fun refreshInvalidatesSearchAndFavoriteState() {

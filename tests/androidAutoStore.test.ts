@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
-import type { Song, NavidromeClient, Album, Artist, Genre } from '../src/subsonic/NavidromeClient.ts';
+import type { Song, NavidromeClient, Album, Artist, Genre, Playlist, InternetRadioStation } from '../src/subsonic/NavidromeClient.ts';
 
 function store(os = 'android') {
   const files = new Map<string, string>();
@@ -36,7 +36,7 @@ function store(os = 'android') {
   }).outputText;
   const exports = {} as {
     ensureAndroidAutoCatalog(songs: Song[], client: NavidromeClient): Promise<void>;
-    saveAndroidAutoCatalog(songs: Song[], client: NavidromeClient, metadata?: { albums: Album[]; artists: Artist[]; genres: Genre[] }): Promise<void>;
+    saveAndroidAutoCatalog(songs: Song[], client: NavidromeClient, metadata?: { albums: Album[]; artists: Artist[]; genres: Genre[]; playlists?: Playlist[]; radios?: InternetRadioStation[] }): Promise<void>;
     updateAndroidAutoFavorite(songId: string, starred?: string): Promise<void>;
     clearAndroidAutoCatalog(): Promise<void>;
   };
@@ -45,7 +45,7 @@ function store(os = 'android') {
   } });
   return { ...exports, files, notifications: () => notifications, failMove: () => { failMove = true; } };
 }
-const song: Song = { id: 'one', title: 'Original', album: 'Album', artist: 'Artist', genre: 'Jazz' };
+const song: Song = { id: 'one', title: 'Original', album: 'Album', artist: 'Artist', genre: 'Jazz', year: 1999 };
 const client = { streamUrl: async (id: string) => `https://example.test/${id}?token=updated` } as NavidromeClient;
 const path = 'private/music-bank-auto-catalog.json';
 
@@ -107,6 +107,44 @@ test('catalogue carries exact phone entities and initial favorite flags', async 
   assert.deepEqual(catalog.artists, metadata.artists);
   assert.deepEqual(catalog.genres, metadata.genres);
   assert.equal(catalog.songs[0].starred, 'yes');
+});
+
+test('catalogue mirrors the phone library: playlists, radios and years', async () => {
+  const s = store();
+  const metadata = {
+    albums: [{ id: 'a', name: 'Album', artist: 'Artist', year: 1999 }],
+    artists: [],
+    genres: [],
+    playlists: [{ id: 'p1', name: 'Mix', owner: 'demo', entry: undefined }],
+    radios: [{ id: 'st1', name: 'Station', streamUrl: 'https://radio.test/stream', homePageUrl: 'https://radio.test' }],
+  };
+  const withEntries = {
+    streamUrl: client.streamUrl,
+    getPlaylistEntries: async (id: string) => (id === 'p1' ? [{ id: 'one' }, { id: 'two' }] : []),
+  } as unknown as NavidromeClient;
+  await s.saveAndroidAutoCatalog([song], withEntries, metadata);
+  const catalog = JSON.parse(s.files.get(path)!);
+  assert.equal(catalog.version, 3);
+  assert.equal(catalog.songs[0].year, 1999);
+  assert.deepEqual(catalog.playlists, [{ id: 'p1', name: 'Mix', owner: 'demo', songIds: ['one', 'two'] }]);
+  assert.deepEqual(catalog.radios, [{ id: 'st1', name: 'Station', streamUrl: 'https://radio.test/stream', homePageUrl: 'https://radio.test' }]);
+});
+
+test('offline playlist refreshes fall back to the previous catalogue entries', async () => {
+  const s = store();
+  const playlists = [{ id: 'p1', name: 'Mix' }];
+  const online = {
+    streamUrl: client.streamUrl,
+    getPlaylistEntries: async () => [{ id: 'one' }],
+  } as unknown as NavidromeClient;
+  await s.saveAndroidAutoCatalog([song], online, { albums: [], artists: [], genres: [], playlists });
+  const offline = {
+    streamUrl: client.streamUrl,
+    getPlaylistEntries: async () => { throw new Error('offline'); },
+  } as unknown as NavidromeClient;
+  await s.saveAndroidAutoCatalog([song], offline, { albums: [], artists: [], genres: [], playlists });
+  const catalog = JSON.parse(s.files.get(path)!);
+  assert.deepEqual(catalog.playlists[0].songIds, ['one']);
 });
 
 test('favorite edits follow pending saves and preserve stream URLs and metadata', async () => {

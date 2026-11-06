@@ -24,7 +24,7 @@ flowchart LR
 | `src/storage/` | Credenziali, catalogo, cronologia, preferenze, download e catalogo Auto. |
 | `src/utils/` | Ricerca, saluto/URL, banner, identità e coda download. |
 | `modules/gio-equalizer/` | Migrazione/rimozione credenziali Android legacy. Il nome è storico, non implica un equalizzatore attivo. |
-| `android/app/src/main/java/` | Activity/Application e servizio Media3 per Android Auto. |
+| `android/app/src/main/java/` | Activity/Application e servizio Media3 per Android Auto: album, artisti, brani e Raccolte (generi, preferiti, playlist, radio, anni), con riproduzione nel contesto del contenitore. |
 | `tests/` e `tools/` | Test, mock e strumenti di manutenzione/rilascio. |
 
 La bozza delle credenziali è separata dall'account autenticato. Il logout protegge
