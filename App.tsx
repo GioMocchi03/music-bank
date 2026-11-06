@@ -310,10 +310,20 @@ function MusicBankApp() {
   const expoStatus = useAudioPlayerStatus(expoPlayer);
   const { player, status: playerStatus, state: autoState, error: autoError, command: autoCommand } = useUnifiedPlayer(expoPlayer, expoStatus);
   useEffect(() => { if (autoError) setMessage(`Android Auto: ${autoError}`); }, [autoError]);
+  const autoStateRef = useRef(autoState);
+  autoStateRef.current = autoState;
+  const autoQueueKey = autoState
+    ? [autoState.queueIds.join('\0'), autoState.queueIndex, autoState.shuffle, autoState.repeatMode].join('\u0001')
+    : '';
+  const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
+  // Position updates arrive every poll while playing; only queue changes need this work.
   useEffect(() => {
+    const autoState = autoStateRef.current;
     if (!autoState || disconnectingRef.current || autoState.sampledAt <= nativeLoadFinishedRef.current) return;
-    const known = new Map([...songs, ...nativeKnownSongsRef.current.values(), ...queueRef.current].map((song) => [song.id, song]));
-    const nativeQueue = autoState.queueIds.map((id) => known.get(id));
+    const queued = new Map(queueRef.current.map((song) => [song.id, song]));
+    const nativeQueue = autoState.queueIds.map((id) => (
+      queued.get(id) ?? nativeKnownSongsRef.current.get(id) ?? songsById.get(id)
+    ));
     // Never silently shorten a queue whose library has not finished loading.
     if (nativeQueue.some((song) => !song)) return;
     if (queueRef.current.map((song) => song.id).join('\0') !== autoState.queueIds.join('\0')) {
@@ -322,7 +332,7 @@ function MusicBankApp() {
     setQueueIndex(autoState.queueIds.length ? autoState.queueIndex : -1);
     setShuffle(autoState.shuffle);
     setRepeat(autoState.repeatMode === 1 ? 'one' : autoState.repeatMode === 2 ? 'all' : 'none');
-  }, [autoState, songs]);
+  }, [autoQueueKey, songsById]);
   const audioSessionId = autoState?.audioSessionId ?? 0;
   const currentSong = queueIndex >= 0 ? queue[queueIndex] : undefined;
   const actionTarget = actionSong ?? currentSong;
@@ -464,11 +474,13 @@ function MusicBankApp() {
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
         setSongs(snapshot.songs);
         startupMark('library-loaded');
-        if (saved) {
-          await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot).catch(() => {
+        // Una sync di avvio imminente rigenera già il catalogo: evitiamo il doppio lavoro.
+        if (Date.now() - snapshot.syncedAt >= AUTO_SYNC_FRESHNESS_MS) return;
+        void ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot)
+          .then(() => startupMark('android-auto-catalog-ready'))
+          .catch(() => {
             // Il catalogo Auto verrà rigenerato alla prossima sincronizzazione completa.
           });
-        }
       }).catch(() => {
         // Album, artisti e generi della preview restano immediatamente disponibili.
       });
@@ -725,10 +737,10 @@ function MusicBankApp() {
           syncedAt: Date.now(),
         };
         setMessage('Salvataggio verificato della libreria…');
-        await saveLibrary(snapshot, (savedSongs, totalSongs) => {
+        // saveLibrary rilegge e verifica la generazione salvata prima di attivarla.
+        const restoredSnapshot = await saveLibrary(snapshot, (savedSongs, totalSongs) => {
           setMessage(`Salvataggio sul dispositivo · ${savedSongs}/${totalSongs} brani…`);
         });
-        const restoredSnapshot = await loadLibrary();
         if (
           !restoredSnapshot ||
           restoredSnapshot.albums.length !== allAlbums.length ||
@@ -982,7 +994,11 @@ function MusicBankApp() {
     return () => subscription.remove();
   }, [playNext, player]);
 
-  const searchCatalog = useMemo(() => ({
+  // The normalized index covers every song: build it only once search is used.
+  const [searchWarm, setSearchWarm] = useState(false);
+  const searchWanted = tab === 'search' || !!query.trim();
+  useEffect(() => { if (searchWanted) setSearchWarm(true); }, [searchWanted]);
+  const searchCatalog = useMemo(() => (!searchWarm ? { albums: [], artists: [], songs: [] } : {
       albums: albums.map((album) => ({
         item: album,
         text: normalizeSearchText(`${album.name} ${album.artist} ${album.genre ?? ''}`),
@@ -995,7 +1011,7 @@ function MusicBankApp() {
         item: song,
         text: normalizeSearchText(`${song.title} ${song.artist ?? ''} ${song.album ?? ''} ${song.genre ?? ''}`),
       })),
-    }), [albums, artists, songs]);
+    }), [albums, artists, searchWarm, songs]);
 
   useEffect(() => {
     const trimmed = query.trim();

@@ -533,6 +533,19 @@ export class NavidromeClient {
     });
   }
 
+  /** Stream URLs sharing one token, for catalogues regenerated in bulk. */
+  streamUrls(songIds: string[]): Promise<string[]> {
+    const prefix = `${this.baseUrl}/rest/stream.view?${new URLSearchParams(this.authParams()).toString()}`;
+    return Promise.resolve(songIds.map((id) => (
+      `${prefix}&id=${encodeURIComponent(id)}&format=raw&maxBitRate=0&estimateContentLength=true`
+    )));
+  }
+
+  /** Changes whenever server, user or password change, without exposing the password. */
+  credentialFingerprint(): string {
+    return md5(`${this.baseUrl}\0${this.connection.username}\0${this.connection.password}`);
+  }
+
   downloadUrl(songId: string): Promise<string> {
     return this.url('download', { id: songId });
   }

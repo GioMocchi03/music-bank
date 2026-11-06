@@ -3,6 +3,37 @@
 Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
+## 1.3.19 — 2026-11-06 · build 33
+
+Include tutte le novità della 1.3.18, che non è mai stata pubblicata come APK.
+
+### Migliorato
+
+- Avvio più reattivo: il catalogo Android Auto non viene più rigenerato a ogni apertura,
+  ma solo dopo una sincronizzazione o quando cambiano account, libreria o formato.
+- I link del catalogo Auto condividono un solo token invece di uno per brano, e la
+  generazione cede il passo all'interfaccia tra un blocco e l'altro.
+- Il servizio Android Auto legge il catalogo in background e una sola volta per ogni
+  scrittura, invece di due volte sul thread grafico.
+- Lo stato del player non ridisegna più l'app quando non cambia nulla, e la coda viene
+  riallineata solo quando cambia davvero.
+- L'indice di ricerca viene costruito alla prima ricerca e la sincronizzazione rilegge
+  la libreria salvata una volta sola.
+- I tempi di avvio compaiono anche nei log della build release (`[startup]`).
+
+### Corretto
+
+- La release automatica scarica l'APK da EAS con le credenziali, aspetta fino a 120
+  minuti per le code serali, rispetta il tag scelto nel rilancio manuale, blocca APK
+  firmati con un certificato diverso da quello ufficiale e usa queste note.
+- L'aggiornamento OTA automatico non parte più quando il codice nativo è cambiato
+  rispetto all'ultima release o quando la nuova versione non ha ancora un APK.
+
+### Verificato
+
+- Typecheck, test di unità, test JVM del catalogo Auto e compilazione Kotlin di debug.
+  Tempi di avvio e Android Auto vanno ancora provati su telefono e auto reali.
+
 ## 1.3.18 — 2026-11-05 · build 32
 
 ### Aggiunto

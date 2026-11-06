@@ -35,18 +35,21 @@ function store(os = 'android') {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const exports = {} as {
-    ensureAndroidAutoCatalog(songs: Song[], client: NavidromeClient): Promise<void>;
-    saveAndroidAutoCatalog(songs: Song[], client: NavidromeClient, metadata?: { albums: Album[]; artists: Artist[]; genres: Genre[]; playlists?: Playlist[]; radios?: InternetRadioStation[] }): Promise<void>;
+    ensureAndroidAutoCatalog(songs: Song[], client: NavidromeClient, metadata?: { albums: Album[]; artists: Artist[]; genres: Genre[]; playlists?: Playlist[]; syncedAt?: number }): Promise<void>;
+    saveAndroidAutoCatalog(songs: Song[], client: NavidromeClient, metadata?: { albums: Album[]; artists: Artist[]; genres: Genre[]; playlists?: Playlist[]; radios?: InternetRadioStation[]; syncedAt?: number }): Promise<void>;
     updateAndroidAutoFavorite(songId: string, starred?: string): Promise<void>;
     clearAndroidAutoCatalog(): Promise<void>;
   };
-  vm.runInNewContext(compiled, { exports, Date, require: (name: string) => {
+  vm.runInNewContext(compiled, { exports, Date, setTimeout, require: (name: string) => {
     assert.ok(name in modules, name); return modules[name];
   } });
   return { ...exports, files, notifications: () => notifications, failMove: () => { failMove = true; } };
 }
 const song: Song = { id: 'one', title: 'Original', album: 'Album', artist: 'Artist', genre: 'Jazz', year: 1999 };
-const client = { streamUrl: async (id: string) => `https://example.test/${id}?token=updated` } as NavidromeClient;
+const client = {
+  streamUrls: async (ids: string[]) => ids.map((id) => `https://example.test/${id}?token=updated`),
+  credentialFingerprint: () => 'account-a',
+} as unknown as NavidromeClient;
 const path = 'private/music-bank-auto-catalog.json';
 
 test('existing catalogue updates metadata and credentials with unchanged song count', async () => {
@@ -70,7 +73,7 @@ test('empty library replaces stale songs', async () => {
 test('network and move failures preserve the last usable catalogue', async () => {
   const s = store();
   s.files.set(path, 'old');
-  await assert.rejects(s.saveAndroidAutoCatalog([song], { streamUrl: async () => { throw new Error('offline'); } } as unknown as NavidromeClient));
+  await assert.rejects(s.saveAndroidAutoCatalog([song], { streamUrls: async () => { throw new Error('offline'); } } as unknown as NavidromeClient));
   assert.equal(s.files.get(path), 'old');
   s.failMove();
   await assert.rejects(s.saveAndroidAutoCatalog([song], client));
@@ -85,7 +88,7 @@ test('logout waits for pending writer and later saves recover after failure', as
   const clearing = s.clearAndroidAutoCatalog();
   await Promise.all([saving, clearing]);
   assert.equal(s.files.size, 0);
-  await assert.rejects(s.saveAndroidAutoCatalog([song], { streamUrl: async () => { throw new Error('offline'); } } as unknown as NavidromeClient));
+  await assert.rejects(s.saveAndroidAutoCatalog([song], { streamUrls: async () => { throw new Error('offline'); } } as unknown as NavidromeClient));
   await s.saveAndroidAutoCatalog([song], client);
   assert.equal(JSON.parse(s.files.get(path)!).songs.length, 1);
 });
@@ -119,7 +122,8 @@ test('catalogue mirrors the phone library: playlists, radios and years', async (
     radios: [{ id: 'st1', name: 'Station', streamUrl: 'https://radio.test/stream', homePageUrl: 'https://radio.test' }],
   };
   const withEntries = {
-    streamUrl: client.streamUrl,
+    streamUrls: client.streamUrls,
+    credentialFingerprint: client.credentialFingerprint,
     getPlaylistEntries: async (id: string) => (id === 'p1' ? [{ id: 'one' }, { id: 'two' }] : []),
   } as unknown as NavidromeClient;
   await s.saveAndroidAutoCatalog([song], withEntries, metadata);
@@ -134,12 +138,14 @@ test('offline playlist refreshes fall back to the previous catalogue entries', a
   const s = store();
   const playlists = [{ id: 'p1', name: 'Mix' }];
   const online = {
-    streamUrl: client.streamUrl,
+    streamUrls: client.streamUrls,
+    credentialFingerprint: client.credentialFingerprint,
     getPlaylistEntries: async () => [{ id: 'one' }],
   } as unknown as NavidromeClient;
   await s.saveAndroidAutoCatalog([song], online, { albums: [], artists: [], genres: [], playlists });
   const offline = {
-    streamUrl: client.streamUrl,
+    streamUrls: client.streamUrls,
+    credentialFingerprint: client.credentialFingerprint,
     getPlaylistEntries: async () => { throw new Error('offline'); },
   } as unknown as NavidromeClient;
   await s.saveAndroidAutoCatalog([song], offline, { albums: [], artists: [], genres: [], playlists });
@@ -169,4 +175,23 @@ test('failed favorite write retains the usable catalogue and recovers', async ()
   await assert.rejects(s.updateAndroidAutoFavorite(song.id, 'now'));
   assert.equal(s.files.get(path), previous);
   assert.equal(s.files.size, 1);
+});
+
+test('startup reuses a catalogue written for the same sync, account and library', async () => {
+  const s = store();
+  const metadata = { albums: [], artists: [], genres: [], playlists: [{ id: 'p1', name: 'Mix', songCount: 1 }], syncedAt: 42 };
+  const withEntries = { ...client, getPlaylistEntries: async () => [{ id: 'one' }] } as unknown as NavidromeClient;
+  await s.saveAndroidAutoCatalog([song], withEntries, metadata);
+  await s.ensureAndroidAutoCatalog([song], withEntries, metadata);
+  assert.equal(s.notifications(), 1);
+  await s.ensureAndroidAutoCatalog([song], { ...withEntries, credentialFingerprint: () => 'account-b' } as unknown as NavidromeClient, metadata);
+  assert.equal(s.notifications(), 2);
+  await s.ensureAndroidAutoCatalog([song], { ...withEntries, credentialFingerprint: () => 'account-b' } as unknown as NavidromeClient, {
+    ...metadata, playlists: [{ id: 'p1', name: 'Mix', songCount: 2 }],
+  });
+  assert.equal(s.notifications(), 3);
+  await s.ensureAndroidAutoCatalog([song], withEntries, { ...metadata, syncedAt: 43 });
+  assert.equal(s.notifications(), 4);
+  await s.clearAndroidAutoCatalog();
+  assert.equal(s.files.size, 0);
 });

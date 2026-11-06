@@ -16,14 +16,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+      # JavaScript that needs new native code must ship with a new APK, not over the air.
+      - name: Check native changes since the last release
+        id: native
+        run: |
+          last_tag="$(git describe --tags --abbrev=0 --match 'v*.*.*' HEAD)"
+          last_runtime="$(git show "$last_tag:app.json" | jq -r '.expo.runtimeVersion')"
+          runtime="$(jq -r '.expo.runtimeVersion' app.json)"
+          if [ "$runtime" != "$last_runtime" ]; then
+            echo "::notice::Runtime $runtime has no published APK yet (last release $last_tag): OTA skipped."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif ! git diff --quiet "$last_tag" HEAD -- android modules package-lock.json; then
+            echo "::warning::Native code changed since $last_tag: publish a new APK release instead of an OTA update."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
+        if: steps.native.outputs.skip != 'true'
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run check
+      - if: steps.native.outputs.skip != 'true'
+        run: npm ci
+      - if: steps.native.outputs.skip != 'true'
+        run: npm run check
       - name: Verify Expo token
+        if: steps.native.outputs.skip != 'true'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
@@ -31,6 +52,7 @@ jobs:
             echo "EXPO_TOKEN repository secret is missing. Add it in Settings > Secrets and variables > Actions." >&2
             exit 1
           fi
-      - run: npx eas-cli update --channel production --message "Automatic update ${{ github.sha }}" --non-interactive
+      - if: steps.native.outputs.skip != 'true'
+        run: npx eas-cli update --channel production --message "Automatic update ${{ github.sha }}" --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

@@ -16,10 +16,14 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The EAS free queue can exceed 45 minutes in the evening.
+    timeout-minutes: 120
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -28,6 +32,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Check tag, version and release notes
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$RELEASE_TAG" != "v$version" ]; then
+            echo "Tag $RELEASE_TAG does not match package version v$version." >&2
+            exit 1
+          fi
+          test -f "docs/releases/$version.md"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Verify Expo token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "EXPO_TOKEN repository secret is missing." >&2
+            exit 1
+          fi
       - name: Build Android with EAS
         id: eas-build
         run: |
@@ -42,13 +63,24 @@ jobs:
           mkdir -p release-output
           download_json="$(npx eas-cli build:download --build-id "${{ steps.eas-build.outputs.build_id }}" --non-interactive --json)"
           apk_path="$(printf '%s' "$download_json" | jq -r '.path')"
-          test -n "$apk_path"
-          mv "$apk_path" "release-output/MusicBank-${GITHUB_REF_NAME}.apk"
-          sha256sum "release-output/MusicBank-${GITHUB_REF_NAME}.apk" > "release-output/MusicBank-${GITHUB_REF_NAME}.apk.sha256"
+          test -n "$apk_path" && test "$apk_path" != "null"
+          mv "$apk_path" "release-output/MusicBank-${RELEASE_TAG}.apk"
+          (cd release-output && sha256sum "MusicBank-${RELEASE_TAG}.apk" > "MusicBank-${RELEASE_TAG}.apk.sha256")
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      - name: Verify APK signing certificate
+        run: node tools/verify-apk-certificate.mjs "release-output/MusicBank-${RELEASE_TAG}.apk"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" release-output/* \
-            --title "Music Bank ${GITHUB_REF_NAME}" \
-            --generate-notes
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-output/* --clobber
+            gh release edit "$RELEASE_TAG" --notes-file "docs/releases/${RELEASE_VERSION}.md" --draft=false --latest
+          else
+            gh release create "$RELEASE_TAG" release-output/* \
+              --verify-tag \
+              --title "Music Bank ${RELEASE_TAG}" \
+              --notes-file "docs/releases/${RELEASE_VERSION}.md" \
+              --latest
+          fi
