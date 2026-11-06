@@ -2,8 +2,8 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 export { compareVersions } from '../utils/version';
 
-export const APP_VERSION = '1.3.17';
-export const APP_BUILD = 31;
+export const APP_VERSION = '1.3.18';
+export const APP_BUILD = 32;
 export const PRIVATE_RELEASES_URL = 'https://github.com/GioMocchi03/music-bank/releases/latest';
 
 const TOKEN_KEY = 'music-bank.github.release-token.v1';

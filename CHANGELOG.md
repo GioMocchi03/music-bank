@@ -3,6 +3,34 @@
 Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
+## 1.3.18 — 2026-11-05 · build 32
+
+### Aggiunto
+
+- Android Auto ora rispecchia la Libreria del telefono: accanto ad Album, Artisti e Brani
+  compare la sezione **Raccolte** con Generi musicali, Preferiti, Playlist, Radio Internet
+  e Anni, nei limiti dei quattro pannelli consentiti da Android Auto.
+- Le stazioni radio del server sono riproducibili direttamente da Android Auto.
+- Il catalogo Auto include playlist e anni (versione 3); i contenuti delle playlist
+  restano disponibili anche quando una sincronizzazione non raggiunge il server.
+
+### Migliorato
+
+- Toccando un brano dentro una playlist o la lista radio, la coda segue quel contenitore
+  invece dell'album, come avviene nell'app.
+
+### Corretto
+
+- Riferimenti a Expo aggiornati alla versione 58 in README, AGENTS.md e messaggi degli strumenti.
+- Il workflow di verifica Android Auto torna a partire su `main` e sulle pull request.
+- Rimosso lo strumento di patch di expo-audio non più usato: l'equalizzatore lavora sulla
+  sessione audio di ExoPlayer.
+
+### Verificato
+
+- Typecheck, test di unità e test JVM del catalogo Auto superati; compilazione Kotlin
+  di debug superata. La prova su un host Android Auto reale resta necessaria.
+
 ## 1.3.12 — 2026-10-30 · build 26
 
 ### Migliorato
