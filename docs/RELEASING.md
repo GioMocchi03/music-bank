@@ -1,8 +1,17 @@
 # Pubblicare un aggiornamento
 
-Gli APK ufficiali sono firmati **localmente** e allegati a GitHub Releases. La CI
-non contiene chiavi private e non pubblica automaticamente file destinati agli utenti.
-Il suo artefatto Android è esplicitamente non firmato.
+La strada normale è automatica: un tag `vX.Y.Z` avvia
+`.github/workflows/release.yml`, che compila l'APK con EAS (profilo `release`),
+lo scarica, controlla che il certificato coincida con `certificateSha256` di
+`release.config.json` e pubblica la release con le note di `docs/releases/X.Y.Z.md`.
+Per ripubblicare un tag esistente usare *Run workflow* indicando il tag.
+
+Ogni push su `main` pubblica anche un aggiornamento OTA (`eas-update.yml`), tranne
+quando `runtimeVersion` non ha ancora un APK pubblicato o quando `android/`, `modules/`
+o `package-lock.json` sono cambiati rispetto all'ultima release GitHub con APK: quel codice richiede un
+nuovo APK. In quel caso aumentare versione, `versionCode` e `runtimeVersion` e creare il tag.
+
+Il procedimento manuale qui sotto resta valido come alternativa.
 
 La repository e le release sono **private**. Pubblicare una bozza di release non
 cambia la visibilità della repository: scaricano gli allegati solo gli account

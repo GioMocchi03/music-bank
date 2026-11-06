@@ -117,4 +117,15 @@ class AutoCatalogueTest {
     assertEquals("song:old", catalog.search("Legacy").single().mediaId)
     assertEquals(1, catalog.children("music-bank-albums").size)
   }
+
+  @Test fun backgroundLoadReportsWhetherTheFileWasUsable() {
+    val broken = File.createTempFile("auto-broken", ".json").apply {
+      writeText("broken json")
+      deleteOnExit()
+    }
+    assertFalse(MusicBankAutoService.AutoCatalogue().apply { load(broken) }.isLoaded)
+    assertTrue(MusicBankAutoService.AutoCatalogue().apply { load(file()) }.isLoaded)
+    val missing = File(broken.parentFile, "auto-missing-${System.nanoTime()}.json")
+    assertTrue(MusicBankAutoService.AutoCatalogue().apply { load(missing) }.isLoaded)
+  }
 }

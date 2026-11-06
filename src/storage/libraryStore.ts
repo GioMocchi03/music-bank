@@ -179,13 +179,11 @@ async function loadChunkedLibraryPreview(): Promise<LibraryPreview | null> {
 export async function saveLibrary(
   snapshot: LibrarySnapshot,
   onProgress?: (savedSongs: number, totalSongs: number) => void,
-): Promise<void> {
+): Promise<LibrarySnapshot> {
   if (Platform.OS === 'web') {
-    await AsyncStorage.setItem(WEB_KEY, JSON.stringify({
-      ...snapshot,
-      songs: snapshot.songs.map(stripSongCover),
-    }));
-    return;
+    const stored = { ...snapshot, songs: snapshot.songs.map(stripSongCover) };
+    await AsyncStorage.setItem(WEB_KEY, JSON.stringify(stored));
+    return normalizeLibrary(stored);
   }
 
   const root = new Directory(Paths.document, ROOT_DIRECTORY);
@@ -239,8 +237,8 @@ export async function saveLibrary(
       onProgress?.(Math.min(start + chunk.length, snapshot.songs.length), snapshot.songs.length);
     }
 
-    // Rilegge l'intera generazione prima di renderla attiva.
-    await readGeneration(root, manifest);
+    // Rilegge l'intera generazione prima di renderla attiva: e la copia restituita all'app.
+    const verified = await readGeneration(root, manifest);
 
     const manifestTemporary = new File(root, `${MANIFEST_FILE}.tmp`);
     manifestTemporary.create({ overwrite: true });
@@ -248,8 +246,9 @@ export async function saveLibrary(
     await manifestTemporary.move(manifestDestination, { overwrite: true });
     manifestCommitted = true;
 
-    const verified = await loadChunkedLibrary();
-    if (!verified || verified.syncedAt !== snapshot.syncedAt) {
+    // I blocchi sono gia stati riletti: basta confermare che la manifest attiva punti a loro.
+    const active = await readActiveManifest();
+    if (!active || active.manifest.generation !== generationName || verified.syncedAt !== snapshot.syncedAt) {
       throw new Error('La libreria non e rimasta leggibile dopo il salvataggio.');
     }
 
@@ -268,6 +267,7 @@ export async function saveLibrary(
     try {
       await AsyncStorage.removeItem(LEGACY_KEY);
     } catch {}
+    return verified;
   } catch (error) {
     if (manifestCommitted) {
       try {
