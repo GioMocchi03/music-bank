@@ -23,7 +23,7 @@ jobs:
         id: native
         run: |
           # A tag alone does not prove the APK was published: compare with the latest release that ships one.
-          if ! last_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq 'select(any(.assets[]; .name | endswith(".apk"))) | .tag_name')" || [ -z "$last_tag" ]; then
+          if ! last_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select((.draft or .prerelease) | not) | select(any(.assets[]; .name | endswith(".apk")))][0].tag_name // empty')" || [ -z "$last_tag" ]; then
             echo "::warning::No published APK release could be verified: OTA skipped."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
