@@ -26,6 +26,7 @@ import java.util.Locale
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -57,29 +58,36 @@ class MusicBankAutoService : MediaLibraryService() {
   /** Bridge refreshes and FileObserver events for the same write collapse into one load. */
   private fun refresh() {
     if (destroyed || !refreshQueued.compareAndSet(false, true)) return
-    catalogueLoader.execute {
+    try {
+      catalogueLoader.execute(::loadCatalogue)
+    } catch (_: RejectedExecutionException) {
+      // FileObserver events can race with onDestroy() shutting the loader down.
       refreshQueued.set(false)
-      val file = File(filesDir, CATALOGUE_FILE)
-      val stamp = catalogueStamp(file)
-      if (stamp == attemptedStamp) {
-        initialLoad.set(Unit)
-        return@execute
-      }
-      attemptedStamp = stamp
-      val next = AutoCatalogue().apply { load(file) }
-      mainHandler.post {
-        if (destroyed) return@post
-        // A corrupt update keeps the last usable catalogue, as reloadIfChanged() does.
-        if (next.isLoaded) {
-          catalogue = next
-          librarySession?.let { session ->
-            next.parentIds().forEach { id ->
-              session.notifyChildrenChanged(id, next.children(id).size, null)
-            }
+    }
+  }
+
+  private fun loadCatalogue() {
+    refreshQueued.set(false)
+    val file = File(filesDir, CATALOGUE_FILE)
+    val stamp = catalogueStamp(file)
+    if (stamp == attemptedStamp) {
+      initialLoad.set(Unit)
+      return
+    }
+    attemptedStamp = stamp
+    val next = AutoCatalogue().apply { load(file) }
+    mainHandler.post {
+      if (destroyed) return@post
+      // A corrupt update keeps the last usable catalogue, as reloadIfChanged() does.
+      if (next.isLoaded) {
+        catalogue = next
+        librarySession?.let { session ->
+          next.parentIds().forEach { id ->
+            session.notifyChildrenChanged(id, next.children(id).size, null)
           }
         }
-        initialLoad.set(Unit)
       }
+      initialLoad.set(Unit)
     }
   }
 

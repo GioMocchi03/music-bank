@@ -8,7 +8,7 @@ Per ripubblicare un tag esistente usare *Run workflow* indicando il tag.
 
 Ogni push su `main` pubblica anche un aggiornamento OTA (`eas-update.yml`), tranne
 quando `runtimeVersion` non ha ancora un APK pubblicato o quando `android/`, `modules/`
-o `package-lock.json` sono cambiati rispetto all'ultimo tag: quel codice richiede un
+o `package-lock.json` sono cambiati rispetto all'ultima release GitHub con APK: quel codice richiede un
 nuovo APK. In quel caso aumentare versione, `versionCode` e `runtimeVersion` e creare il tag.
 
 Il procedimento manuale qui sotto resta valido come alternativa.
