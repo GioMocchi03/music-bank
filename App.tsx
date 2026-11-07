@@ -1999,7 +1999,7 @@ function HomeScreen({
   }, [artists, history]);
   const hasLibrary = albums.length > 0;
   const heroTitle = loading ? 'La tua libreria'
-    : featured?.name ?? (configured ? 'La tua libreria è vuota' : 'Collega Navidrome');
+    : featured?.name ?? (configured ? 'Nessun album sincronizzato' : 'Collega Navidrome');
   const heroArtist = loading ? 'Preparazione del tuo suggerimento…'
     : featured?.artist ?? (configured ? 'Sincronizza il server per trovare la tua musica' : 'La tua musica apparirà qui');
   return (

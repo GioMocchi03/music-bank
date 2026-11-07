@@ -214,7 +214,8 @@ test('mantiene il suggerimento offline e rimuove quello vecchio dopo il logout',
   assert.ok(texts(view).includes('Collega Navidrome'));
   assert.ok(!texts(view).includes(favorite.name));
   await act(async () => view.update(React.createElement(Home, { ...baseProps, loading: false, configured: true })));
-  assert.ok(texts(view).includes('La tua libreria è vuota'));
+  assert.ok(texts(view).includes('Nessun album sincronizzato'));
+  assert.ok(!texts(view).includes('La tua libreria è vuota'));
   assert.ok(!texts(view).includes('Collega Navidrome'));
   await act(async () => view.unmount());
 });
