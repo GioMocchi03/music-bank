@@ -2,10 +2,15 @@ name: Android Auto verification
 on:
   push:
     branches: [main]
-    paths: ['android/**', 'modules/**', 'src/**', 'App.tsx', 'package.json', 'package-lock.json']
+    paths: ['android/**', 'modules/**', 'src/**', 'App.tsx', 'package.json', 'package-lock.json', '.github/workflows/android-auto-fix.yml']
   pull_request:
-    paths: ['android/**', 'modules/**', 'src/**', 'App.tsx', 'package.json', 'package-lock.json']
+    paths: ['android/**', 'modules/**', 'src/**', 'App.tsx', 'package.json', 'package-lock.json', '.github/workflows/android-auto-fix.yml']
   workflow_dispatch:
+    inputs:
+      eas_preview:
+        description: Also build a preview on EAS cloud (uses Expo build quota)
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -41,7 +46,9 @@ jobs:
           name: music-bank-android-auto-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-      - name: EAS preview APK (requires configured Expo token)
+          retention-days: 3
+      - name: Optional EAS cloud preview APK
+        if: github.event_name == 'workflow_dispatch' && inputs.eas_preview
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |

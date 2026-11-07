@@ -6,6 +6,7 @@ import {
   normalizeSearchText,
   rankDirectSearchItems,
   rankSearchItems,
+  rankSearchItemsInSlices,
 } from '../src/utils/search.ts';
 
 const catalog = [
@@ -27,4 +28,30 @@ test('tollera un piccolo errore di battitura quando non ci sono risultati dirett
 
 test('interrompe il calcolo Levenshtein oltre la soglia configurata', () => {
   assert.equal(levenshteinDistance('enterloop', 'completely', 2), 3);
+});
+
+test('la ricerca a blocchi conserva ranking, stabilità e limiti', async () => {
+  const entries = Array.from({ length: 650 }, (_, id) => ({
+    item: { id }, text: normalizeSearchText(['Jazz', 'Jazz Club', 'My Jazz', 'Ja zz', 'Other'][id % 5]),
+  }));
+  for (const query of ['jazz', 'jaz', 'jzz', 'missing', '']) {
+    for (const limit of [0, 1, 25, 100]) {
+      assert.deepEqual(
+        await rankSearchItemsInSlices(entries, query, limit, new AbortController().signal),
+        rankDirectSearchItems(entries, query, limit),
+      );
+      assert.deepEqual(
+        await rankSearchItemsInSlices(entries, query, limit, new AbortController().signal, true),
+        rankSearchItems(entries, query, limit),
+      );
+    }
+  }
+});
+
+test('uscire dalla ricerca annulla anche un filtro locale ancora in corso', async () => {
+  const controller = new AbortController();
+  const entries = Array.from({ length: 10_000 }, (_, item) => ({ item, text: 'jazz' }));
+  const pending = rankSearchItemsInSlices(entries, 'jazz', 100, controller.signal);
+  setTimeout(() => controller.abort(), 0);
+  assert.equal(await pending, null);
 });

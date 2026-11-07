@@ -57,6 +57,7 @@ import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, Downlo
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
 import { startupMark } from './src/utils/startupMetrics';
+import { emptyLibraryIndex, prepareLibraryIndex, type LibraryIndex } from './src/utils/libraryIndex';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
@@ -85,7 +86,7 @@ import {
 } from './src/subsonic/NavidromeClient';
 import {
   normalizeSearchText,
-  rankDirectSearchItems,
+  rankSearchItemsInSlices,
   rankSearchItems,
 } from './src/utils/search';
 import {
@@ -108,6 +109,7 @@ import {
 } from './src/utils/playlists';
 
 type Tab = 'home' | 'library' | 'search' | 'settings';
+const EMPTY_LIBRARY_INDEX = emptyLibraryIndex();
 type LibraryMode =
   | 'hub'
   | 'albums'
@@ -315,7 +317,22 @@ function MusicBankApp() {
   const autoQueueKey = autoState
     ? [autoState.queueIds.join('\0'), autoState.queueIndex, autoState.shuffle, autoState.repeatMode].join('\u0001')
     : '';
-  const songsById = useMemo(() => new Map(songs.map((song) => [song.id, song])), [songs]);
+  const [preparedLibrary, setPreparedLibrary] = useState<{
+    albums: Album[]; artists: Artist[]; songs: Song[]; index: LibraryIndex;
+  } | null>(null);
+  const libraryIndexReady = preparedLibrary?.albums === albums
+    && preparedLibrary?.artists === artists && preparedLibrary?.songs === songs;
+  const libraryIndex = libraryIndexReady ? preparedLibrary.index : EMPTY_LIBRARY_INDEX;
+  useEffect(() => {
+    const controller = new AbortController();
+    void prepareLibraryIndex(albums, artists, songs, controller.signal).then((index) => {
+      if (!index || controller.signal.aborted) return;
+      setPreparedLibrary({ albums, artists, songs, index });
+      startupMark('library-index-ready');
+    });
+    return () => controller.abort();
+  }, [albums, artists, songs]);
+  const songsById = libraryIndex.songsById;
   // Position updates arrive every poll while playing; only queue changes need this work.
   useEffect(() => {
     const autoState = autoStateRef.current;
@@ -994,90 +1011,76 @@ function MusicBankApp() {
     return () => subscription.remove();
   }, [playNext, player]);
 
-  // The normalized index covers every song: build it only once search is used.
-  const [searchWarm, setSearchWarm] = useState(false);
-  const searchWanted = tab === 'search' || !!query.trim();
-  useEffect(() => { if (searchWanted) setSearchWarm(true); }, [searchWanted]);
-  const searchCatalog = useMemo(() => (!searchWarm ? { albums: [], artists: [], songs: [] } : {
-      albums: albums.map((album) => ({
-        item: album,
-        text: normalizeSearchText(`${album.name} ${album.artist} ${album.genre ?? ''}`),
-      })),
-      artists: artists.map((artist) => ({
-        item: artist,
-        text: normalizeSearchText(artist.name),
-      })),
-      songs: songs.map((song) => ({
-        item: song,
-        text: normalizeSearchText(`${song.title} ${song.artist ?? ''} ${song.album ?? ''} ${song.genre ?? ''}`),
-      })),
-    }), [albums, artists, searchWarm, songs]);
+  const searchCatalog = libraryIndex.search;
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (!trimmed) {
+    if (tab !== 'search' || !trimmed) {
       setSearchResults(emptySearch);
       setSearching(false);
       return;
     }
     let cancelled = false;
     const abortController = new AbortController();
-    let localResults: SearchResults = {
-      albums: searchFilter === 'all' || searchFilter === 'albums'
-        ? rankDirectSearchItems(searchCatalog.albums, trimmed, 60)
-        : [],
-      artists: searchFilter === 'all' || searchFilter === 'artists'
-        ? rankDirectSearchItems(searchCatalog.artists, trimmed, 30)
-        : [],
-      songs: searchFilter === 'all' || searchFilter === 'songs'
-        ? rankDirectSearchItems(searchCatalog.songs, trimmed, 100)
-        : [],
-    };
-    setSearchResults(localResults);
-
-    const needsFuzzySearch = !localResults.albums.length
-      && !localResults.artists.length
-      && !localResults.songs.length;
-    const fuzzyTimer = needsFuzzySearch ? setTimeout(() => {
+    let localResults = emptySearch;
+    let remoteResults: SearchResults | null = null;
+    let localPending = true;
+    let remotePending = !!(clientRef.current && connected);
+    const publishResults = () => {
       if (cancelled) return;
-      localResults = {
+      setSearchResults(remoteResults ? mergeSearchResults(localResults, remoteResults) : localResults);
+      setSearching(localPending || remotePending);
+    };
+    const rankLocal = async (fuzzy = false): Promise<SearchResults> => ({
         albums: searchFilter === 'all' || searchFilter === 'albums'
-          ? rankSearchItems(searchCatalog.albums, trimmed, 60)
+          ? await rankSearchItemsInSlices(searchCatalog.albums, trimmed, 60, abortController.signal, fuzzy) ?? []
           : [],
         artists: searchFilter === 'all' || searchFilter === 'artists'
-          ? rankSearchItems(searchCatalog.artists, trimmed, 30)
+          ? await rankSearchItemsInSlices(searchCatalog.artists, trimmed, 30, abortController.signal, fuzzy) ?? []
           : [],
         songs: searchFilter === 'all' || searchFilter === 'songs'
-          ? rankSearchItems(searchCatalog.songs, trimmed, 100)
+          ? await rankSearchItemsInSlices(searchCatalog.songs, trimmed, 100, abortController.signal, fuzzy) ?? []
           : [],
-      };
-      setSearchResults(localResults);
-    }, 90) : undefined;
+    });
+    publishResults();
+    const localTimer = setTimeout(() => {
+      void (async () => {
+        localResults = await rankLocal();
+        if (cancelled) return;
+        publishResults();
+        if (!localResults.albums.length && !localResults.artists.length && !localResults.songs.length) {
+          localResults = await rankLocal(true);
+        }
+        localPending = false;
+        publishResults();
+      })();
+    }, 80);
 
     const timer = setTimeout(() => {
       const client = clientRef.current;
       if (!client || !connected) {
         return;
       }
-      setSearching(true);
       void client.search(trimmed, abortController.signal).then(
-        (remoteResults) => {
-          if (!cancelled) setSearchResults(mergeSearchResults(localResults, remoteResults));
+        (results) => {
+          remoteResults = results;
+          publishResults();
         },
         () => {
           // I risultati locali restano visibili anche durante un calo di rete.
         },
       ).finally(() => {
-        if (!cancelled) setSearching(false);
+        remotePending = false;
+        publishResults();
       });
     }, 220);
     return () => {
       cancelled = true;
       abortController.abort();
       clearTimeout(timer);
-      if (fuzzyTimer) clearTimeout(fuzzyTimer);
+      clearTimeout(localTimer);
     };
-  }, [connected, query, searchCatalog, searchFilter]);
+  }, [connected, query, searchCatalog, searchFilter, tab]);
 
   useEffect(() => {
     if (!detail) return;
@@ -1426,6 +1429,8 @@ function MusicBankApp() {
               {tab === 'library' && (
                 <LibraryScreen
                   mode={libraryMode}
+                  index={libraryIndex}
+                  indexReady={libraryIndexReady}
                   onMode={setLibraryMode}
                   albums={albums}
                   artists={artists}
@@ -1460,7 +1465,7 @@ function MusicBankApp() {
                   filter={searchFilter}
                   onFilter={setSearchFilter}
                   results={searchResults}
-                  searching={searching}
+                  searching={searching || (!!query.trim() && !libraryIndexReady)}
                   columns={columns}
                   onAlbum={(album) => setDetail({ type: 'album', id: album.id })}
                   onPlayAlbum={(album) => void playAlbum(album)}
@@ -2044,6 +2049,8 @@ function HomeScreen({
 
 function LibraryScreen({
   mode,
+  index,
+  indexReady,
   onMode,
   albums,
   artists,
@@ -2066,6 +2073,8 @@ function LibraryScreen({
   onMoreSong,
 }: {
   mode: LibraryMode;
+  index: LibraryIndex;
+  indexReady: boolean;
   onMode: (mode: LibraryMode) => void;
   albums: Album[];
   artists: Artist[];
@@ -2088,24 +2097,7 @@ function LibraryScreen({
   onMoreSong: (song: Song) => void;
 }) {
   const [genreQuery, setGenreQuery] = useState('');
-  const favoriteSongs = useMemo(
-    () => songs.filter((song) => !!song.starred),
-    [songs],
-  );
-  const years = useMemo(
-    () => Array.from(new Set(albums
-      .map((album) => album.year)
-      .filter((year): year is number => typeof year === 'number')))
-      .sort((a, b) => Number(b) - Number(a)),
-    [albums],
-  );
-  const yearCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    albums.forEach((album) => {
-      if (album.year) counts.set(album.year, (counts.get(album.year) ?? 0) + 1);
-    });
-    return counts;
-  }, [albums]);
+  const { favoriteSongs, years, yearCounts } = index;
   const filteredGenres = useMemo(() => {
     if (!genreQuery.trim()) return genres;
     const entries = genres.map((genre) => ({
@@ -2115,18 +2107,18 @@ function LibraryScreen({
     return rankSearchItems(entries, genreQuery, genres.length);
   }, [genreQuery, genres]);
   const playlistGroups = useMemo(
-    () => partitionPlaylists(playlists, username, personalPlaylistIds),
-    [personalPlaylistIds, playlists, username],
+    () => mode === 'playlists' ? partitionPlaylists(playlists, username, personalPlaylistIds) : { owned: [], server: [] },
+    [mode, personalPlaylistIds, playlists, username],
   );
   const tiles: Array<[LibraryMode, IconName, string, string]> = [
     ['albums', 'album', 'Album', `${albums.length}`],
     ['artists', 'account-music', 'Artisti album', `${artists.length}`],
     ['genres', 'tag-outline', 'Generi musicali', `${genres.length}`],
     ['tracks', 'music-note', 'Tracce', `${songs.length}`],
-    ['favorites', 'heart', 'Preferiti', `${favoriteSongs.length}`],
+    ['favorites', 'heart', 'Preferiti', indexReady ? `${favoriteSongs.length}` : '…'],
     ['playlists', 'playlist-music', 'Playlist', `${playlists.length}`],
     ['radio', 'radio', 'Radio Internet', `${radios.length}`],
-    ['years', 'calendar-range', 'Anni', `${years.length}`],
+    ['years', 'calendar-range', 'Anni', indexReady ? `${years.length}` : '…'],
     ['offline', 'download-circle', 'Offline', `${offlineTracks.length}`],
   ];
   return (
@@ -2198,7 +2190,7 @@ function LibraryScreen({
         />
       )}
       {mode === 'favorites' && (
-        favoriteSongs.length
+        !indexReady ? <LoadingState text="Preparazione preferiti…" /> : favoriteSongs.length
           ? <CollectionPager
               items={favoriteSongs}
               pageSize={100}
@@ -2210,7 +2202,8 @@ function LibraryScreen({
       {mode === 'offline' && (
         <OfflineDownloads onSong={onSong} onMoreSong={onMoreSong} />
       )}
-      {mode === 'years' && (
+      {mode === 'years' && !indexReady && <LoadingState text="Preparazione anni…" />}
+      {mode === 'years' && indexReady && (
         <View style={styles.libraryHub}>
           {years.map((year) => (
             <Pressable key={year} style={styles.libraryTile} onPress={() => {
