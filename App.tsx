@@ -144,9 +144,6 @@ const OfflineContext = createContext<{
   onDownloadMany: (songs: Song[]) => void;
 }>({ tracks: new Map(), jobs: {}, sourceKey: 'legacy', onDownload: () => {}, onDownloadMany: () => {} });
 const AUTO_SYNC_FRESHNESS_MS = 6 * 60 * 60 * 1000;
-const demoAlbums: Album[] = [
-  { id: 'demo-1', name: 'Collega Navidrome', artist: 'La tua musica apparirà qui' },
-];
 const emptySearch: SearchResults = { albums: [], artists: [], songs: [] };
 
 function mergeSearchResults(local: SearchResults, remote: SearchResults): SearchResults {
@@ -221,7 +218,12 @@ function MusicBankApp() {
     password: '',
   });
   const [albums, setAlbums] = useState<Album[]>([]);
+  const [libraryPreviewReady, setLibraryPreviewReady] = useState(false);
   const [featuredAlbumId, setFeaturedAlbumId] = useState<string | null>(null);
+  const featuredAlbum = useMemo(
+    () => featuredAlbumId ? albums.find((album) => album.id === featuredAlbumId) : undefined,
+    [albums, featuredAlbumId],
+  );
   const [artists, setArtists] = useState<Artist[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -229,6 +231,7 @@ function MusicBankApp() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [radios, setRadios] = useState<InternetRadioStation[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyReady, setHistoryReady] = useState(false);
   const [offlineTracks, setOfflineTracks] = useState<OfflineTrack[]>([]);
   const [activeSourceKey, setActiveSourceKey] = useState('legacy');
   const [downloadJobs, setDownloadJobs] = useState<Record<string, DownloadJob>>({});
@@ -425,6 +428,8 @@ function MusicBankApp() {
       if (active) setHistory(savedHistory);
     }).catch(() => {
       // La Home resta utilizzabile anche senza cronologia locale.
+    }).finally(() => {
+      if (active) setHistoryReady(true);
     });
     void offlinePromise.then((savedOffline) => {
       if (active) {
@@ -485,6 +490,7 @@ function MusicBankApp() {
         );
         startupMark('preview-visible');
       }
+      setLibraryPreviewReady(true);
       // Seconda fase non bloccante: completa ricerca, tracce e Android Auto.
       await loadLibrary().then(async (snapshot) => {
         if (!active || !snapshot || !saved) return;
@@ -508,6 +514,7 @@ function MusicBankApp() {
       }
     }).finally(() => {
       if (active) {
+        setLibraryPreviewReady(true);
         setBootstrapReady(true);
         startupMark('first-screen-ready');
       }
@@ -853,10 +860,9 @@ function MusicBankApp() {
   }, [bootstrapReady, verifyConnection]);
 
   useEffect(() => {
-    if (!bootstrapReady || !preferencesReady || !albums.length) return;
-    if (featuredAlbumId && albums.some((album) => album.id === featuredAlbumId)) return;
+    if (!libraryPreviewReady || !historyReady || !preferencesReady || !albums.length || featuredAlbum) return;
     const selected = chooseFeaturedAlbum(
-      albums, songs, history, preferences.lastFeaturedArtist, preferences.lastFeaturedAlbumId,
+      albums, [], history, preferences.lastFeaturedArtist, preferences.lastFeaturedAlbumId,
     );
     if (!selected) return;
     setFeaturedAlbumId(selected.id);
@@ -865,7 +871,7 @@ function MusicBankApp() {
       lastFeaturedArtist: featuredArtistKey(selected),
       lastFeaturedAlbumId: selected.id,
     }));
-  }, [albums, bootstrapReady, featuredAlbumId, history, preferences.lastFeaturedAlbumId, preferences.lastFeaturedArtist, preferencesReady, songs]);
+  }, [albums, featuredAlbum, history, historyReady, libraryPreviewReady, preferences.lastFeaturedAlbumId, preferences.lastFeaturedArtist, preferencesReady]);
 
   const loadSong = useCallback(
     async (songs: Song[], index: number, autoPlay = true) => {
@@ -1251,7 +1257,6 @@ function MusicBankApp() {
     if (operation) setDownloadJobs((current) => ({ ...current, [key]: { song: scopedSong, status: 'queued' } }));
   }
 
-  const currentAlbums = albums.length ? albums : demoAlbums;
   const connectionConfigured = Boolean(
     connection.serverUrl.trim() && connection.username.trim(),
   );
@@ -1400,8 +1405,11 @@ function MusicBankApp() {
             >
               {tab === 'home' && (
                 <HomeScreen
-                  albums={currentAlbums}
-                  featured={albums.find((album) => album.id === featuredAlbumId) ?? currentAlbums[0]}
+                  albums={albums}
+                  featured={featuredAlbum}
+                  loading={!libraryPreviewReady || !historyReady || !preferencesReady
+                    || (albums.length > 0 && !featuredAlbum)
+                    || (connectionConfigured && !albums.length && (!bootstrapReady || busy))}
                   artists={artists}
                   genres={genres}
                   history={history}
@@ -1937,6 +1945,7 @@ function NavItem({
 function HomeScreen({
   albums,
   featured,
+  loading,
   artists,
   genres,
   history,
@@ -1952,7 +1961,8 @@ function HomeScreen({
   onConnect,
 }: {
   albums: Album[];
-  featured: Album;
+  featured?: Album;
+  loading: boolean;
   artists: Artist[];
   genres: Genre[];
   history: HistoryEntry[];
@@ -1987,24 +1997,30 @@ function HomeScreen({
         .map((artist) => [artist.id, artist]),
     ).values()].slice(0, 8);
   }, [artists, history]);
-  const hasLibrary = albums.length > 0 && featured.id !== 'demo-1';
+  const hasLibrary = albums.length > 0;
+  const heroTitle = loading ? 'La tua libreria'
+    : featured?.name ?? (configured ? 'La tua libreria è vuota' : 'Collega Navidrome');
+  const heroArtist = loading ? 'Preparazione del tuo suggerimento…'
+    : featured?.artist ?? (configured ? 'Sincronizza il server per trovare la tua musica' : 'La tua musica apparirà qui');
   return (
     <>
       <LinearGradient colors={['#3B2477', '#172047', '#111520']} style={[styles.hero, mobile && styles.heroMobile]}>
         <View style={styles.heroGlow} />
         <View style={[styles.heroCopy, mobile && styles.heroCopyMobile]}>
-          <Text style={styles.eyebrow}>{connected ? 'SCELTO DALLA TUA LIBRERIA' : hasLibrary ? 'LIBRERIA LOCALE' : 'BENVENUTO'}</Text>
-          <Text numberOfLines={2} style={[styles.heroTitle, mobile && styles.heroTitleMobile]}>{featured.name}</Text>
-          <Text numberOfLines={1} style={[styles.heroArtist, mobile && styles.heroArtistMobile]}>{featured.artist}</Text>
-          <View style={[styles.heroActions, mobile && styles.heroActionsMobile]}>
-            <Pressable style={styles.primaryButton} onPress={() => hasLibrary ? onPlayAlbum(featured) : onConnect()}>
-              <MaterialCommunityIcons name={hasLibrary ? 'play' : 'server-network'} size={20} color="#10130B" />
-              <Text numberOfLines={1} style={styles.primaryButtonText}>{hasLibrary ? 'Riproduci' : configured ? 'Riprova server' : 'Collega server'}</Text>
-            </Pressable>
-            {connected && <IconButton icon="shuffle-variant" onPress={onRandom} light />}
-          </View>
+          <Text style={styles.eyebrow}>{loading ? 'LA TUA MUSICA' : connected && hasLibrary ? 'SCELTO DALLA TUA LIBRERIA' : hasLibrary ? 'LIBRERIA LOCALE' : 'BENVENUTO'}</Text>
+          <Text numberOfLines={2} style={[styles.heroTitle, mobile && styles.heroTitleMobile]}>{heroTitle}</Text>
+          <Text numberOfLines={1} style={[styles.heroArtist, mobile && styles.heroArtistMobile]}>{heroArtist}</Text>
+          {loading ? <ActivityIndicator color={lime} /> : (
+            <View style={[styles.heroActions, mobile && styles.heroActionsMobile]}>
+              <Pressable style={styles.primaryButton} onPress={() => featured ? onPlayAlbum(featured) : onConnect()}>
+                <MaterialCommunityIcons name={hasLibrary ? 'play' : 'server-network'} size={20} color="#10130B" />
+                <Text numberOfLines={1} style={styles.primaryButtonText}>{hasLibrary ? 'Riproduci' : configured ? 'Riprova server' : 'Collega server'}</Text>
+              </Pressable>
+              {connected && <IconButton icon="shuffle-variant" onPress={onRandom} light />}
+            </View>
+          )}
         </View>
-        {featured.coverUrl && (
+        {!loading && featured?.coverUrl && (
           <Image source={{ uri: featured.coverUrl }} style={[styles.heroCover, mobile && styles.heroCoverMobile]} />
         )}
       </LinearGradient>
