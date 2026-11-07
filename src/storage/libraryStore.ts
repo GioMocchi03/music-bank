@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
+import { yieldToEvents } from '../utils/backgroundWork';
 
 import {
   cleanGenres,
@@ -104,17 +105,25 @@ async function readGeneration(
   manifest: LibraryManifest,
 ): Promise<LibrarySnapshot> {
   const metadata = await readGenerationMetadata(root, manifest);
+  const { songCount: _songCount, ...libraryMetadata } = metadata;
   const generation = new Directory(root, manifest.generation);
   const songs: Song[] = [];
+  const albumCovers = new Map(metadata.albums.map((album) => [album.id, album.coverUrl]));
   for (let index = 0; index < manifest.songChunks; index += 1) {
+    await yieldToEvents();
     const chunkFile = new File(generation, `songs-${index}.json`);
     if (!chunkFile.exists) throw new Error(`Blocco tracce ${index + 1} assente.`);
     const chunk = JSON.parse(await chunkFile.text()) as Song[];
     if (!Array.isArray(chunk)) throw new Error(`Blocco tracce ${index + 1} non valido.`);
-    songs.push(...chunk);
+    for (const song of chunk) {
+      songs.push({
+        ...song,
+        coverUrl: song.albumId ? albumCovers.get(song.albumId) ?? song.coverUrl : song.coverUrl,
+      });
+    }
   }
 
-  const snapshot = normalizeLibrary({ ...metadata, songs });
+  const snapshot = { ...libraryMetadata, songs };
   if (snapshot.songs.length !== manifest.songs) {
     throw new Error('Verifica della libreria salvata non riuscita.');
   }

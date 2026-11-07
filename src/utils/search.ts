@@ -1,3 +1,5 @@
+import { forEachInSlices } from './backgroundWork.ts';
+
 export type SearchEntry<T> = { item: T; text: string };
 
 export function normalizeSearchText(value: string): string {
@@ -102,4 +104,33 @@ export function rankDirectSearchItems<T>(
     .sort((left, right) => left.score - right.score)
     .slice(0, limit)
     .map((entry) => entry.item);
+}
+
+export async function rankSearchItemsInSlices<T>(
+  entries: SearchEntry<T>[],
+  query: string,
+  limit: number,
+  signal: AbortSignal,
+  fuzzy = false,
+): Promise<T[] | null> {
+  const normalizedQuery = normalizeSearchText(query);
+  const collect = async (score: (text: string, query: string) => number) => {
+    const buckets = new Map<number, T[]>();
+    if (!await forEachInSlices(entries, (entry) => {
+      const value = score(entry.text, normalizedQuery);
+      if (!Number.isFinite(value)) return;
+      const bucket = buckets.get(value) ?? [];
+      if (bucket.length < limit) bucket.push(entry.item);
+      buckets.set(value, bucket);
+    }, signal)) return null;
+    const result: T[] = [];
+    for (const value of [...buckets.keys()].sort((a, b) => a - b)) {
+      const bucket = buckets.get(value)!;
+      result.push(...bucket.slice(0, limit - result.length));
+      if (result.length >= limit) break;
+    }
+    return result;
+  };
+  const direct = await collect(directSearchScore);
+  return direct && !direct.length && fuzzy ? collect(fuzzySearchScore) : direct;
 }

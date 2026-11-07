@@ -8,6 +8,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import ts from 'typescript';
 import { equalizerLevelAfterDrag } from '../src/player/equalizer.ts';
 import { isQueueSwipe, queueDropIndex } from '../src/player/gestures.ts';
+import { emptyLibraryIndex } from '../src/utils/libraryIndex.ts';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const require = createRequire(import.meta.url);
@@ -15,19 +16,22 @@ const require = createRequire(import.meta.url);
 // Execute the actual app component bodies against React, with only native views mocked.
 function components(onAdd: (song: unknown) => void = () => {}) {
   const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const names = new Set(['TrackList', 'QueueModal', 'QueueRow', 'SwipeRightAction', 'EqualizerModal', 'EqualizerBand', 'MoreActionsModal', 'ManagePlaylistModal']);
+  const names = new Set(['TrackList', 'QueueModal', 'QueueRow', 'SwipeRightAction', 'EqualizerModal', 'EqualizerBand', 'MoreActionsModal', 'ManagePlaylistModal', 'LibraryScreen']);
   const bodies = source.statements.filter((node) => ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? '')).map((node) => node.getText(source)).join('\n');
   assert.equal(source.statements.filter((node) => ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? '')).length, names.size);
-  const exports = {} as Record<'TrackList' | 'QueueModal' | 'EqualizerModal' | 'MoreActionsModal' | 'ManagePlaylistModal', React.ComponentType<any>>;
+  const exports = {} as Record<'TrackList' | 'QueueModal' | 'EqualizerModal' | 'MoreActionsModal' | 'ManagePlaylistModal' | 'LibraryScreen', React.ComponentType<any>>;
   const calls: Array<{ session: number; enabled: boolean; levels: number[] }> = [];
   const sessions: number[] = [];
-  const compiled = ts.transpileModule(bodies + '\nexport { TrackList, QueueModal, EqualizerModal, MoreActionsModal, ManagePlaylistModal };', {
+  const compiled = ts.transpileModule(bodies + '\nexport { TrackList, QueueModal, EqualizerModal, MoreActionsModal, ManagePlaylistModal, LibraryScreen };', {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(compiled, {
     ...React, exports, require, setTimeout,
     View: 'View', Text: 'Text', Pressable: 'Pressable', ScrollView: 'ScrollView', SafeAreaView: 'SafeAreaView',
     TextInput: 'TextInput', SectionTitle: () => null, PlaylistEmptyRow: () => null,
+    EmptyState: () => null,
+    LoadingState: ({ text }: { text: string }) => React.createElement('Text', null, text),
+    partitionPlaylists: () => { throw new Error('La hub non deve suddividere le playlist'); },
     MaterialCommunityIcons: 'Icon', Artwork: () => null, DownloadIndicator: () => null,
     PanResponder: { create: (handlers: unknown) => ({ panHandlers: handlers }) },
     Platform: { OS: 'android' },
@@ -62,6 +66,30 @@ test('three-dot actions retain append, play next and equalizer callbacks', async
   }
   assert.deepEqual([next, append, eq], [1, 1, 1]);
   await act(async () => view.unmount());
+});
+
+test('riaprire la Libreria riusa gli indici senza scansionare brani, album o playlist', async () => {
+  const c = components();
+  const noScan = new Proxy([], {
+    get(target, key, receiver) {
+      if (key !== 'length') throw new Error(`Scansione durante il render: ${String(key)}`);
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const index = emptyLibraryIndex();
+  index.favoriteSongs = [song];
+  index.years = [2024];
+  const props = { mode: 'hub', index, indexReady: true, albums: noScan, songs: noScan,
+    playlists: noScan, artists: [], genres: [], radios: [], offlineTracks: [],
+    username: 'demo', personalPlaylistIds: new Set(), connected: true, onMode() {} };
+  for (let visit = 0; visit < 3; visit++) {
+    const view = await render(c.LibraryScreen, props);
+    assert.ok(view.root.findAll((node) => String(node.type) === 'Text' && node.children.includes('Preferiti')).length);
+    await act(async () => view.unmount());
+  }
+  const pending = await render(c.LibraryScreen, { ...props, mode: 'favorites', indexReady: false });
+  assert.ok(pending.root.findAll((node) => String(node.type) === 'Text' && node.children.includes('Preparazione preferiti…')).length);
+  await act(async () => pending.unmount());
 });
 
 test('track swipe appends without starting playback and survives polling renders', async () => {
