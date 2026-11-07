@@ -1,10 +1,31 @@
 # Pubblicare un aggiornamento
 
 La strada normale è automatica: un tag `vX.Y.Z` avvia
-`.github/workflows/release.yml`, che compila l'APK con EAS (profilo `release`),
-lo scarica, controlla che il certificato coincida con `certificateSha256` di
+`.github/workflows/release.yml`, che compila l'APK sul runner Linux di GitHub con
+`eas build --local` (profilo `release`), controlla che il certificato coincida con `certificateSha256` di
 `release.config.json` e pubblica la release con le note di `docs/releases/X.Y.Z.md`.
-Per ripubblicare un tag esistente usare *Run workflow* indicando il tag.
+Non usa la coda né la quota di build cloud Expo. I runner standard di GitHub sono
+gratuiti per questa repository pubblica; lo storage di artifact e cache ha limiti
+separati. Non sono necessari runner a pagamento o un nuovo abbonamento.
+
+Serve ancora `EXPO_TOKEN` nei repository secrets: EAS lo usa per verificare il
+progetto e recuperare il keystore già configurato, non per compilare nel cloud.
+La build locale congela le credenziali (`--freeze-credentials`): non deve creare
+o sostituire chiavi. La verifica del certificato resta obbligatoria prima di
+salvare o pubblicare l'APK. Nessuna chiave viene passata ai workflow di PR.
+
+In *Run workflow* indicare un tag esistente e scegliere `builder: github` (default).
+Disabilitare `publish` per una prova: APK firmato e checksum vengono conservati
+come artifact per tre giorni senza modificare la release pubblica. Il builder
+`eas` resta selezionabile manualmente, ma consuma la quota Expo.
+
+Le PR continuano a compilare Kotlin, eseguire i test JVM e generare un APK debug
+su GitHub senza credenziali Expo. L'APK debug richiede Metro e non aggiorna una
+release ufficiale. La preview EAS cloud è opzionale: si avvia solo manualmente
+dal workflow Android Auto selezionando `eas_preview`, mai a ogni push o PR.
+
+Riferimenti: [build EAS locali](https://docs.expo.dev/build-reference/local-builds/)
+e [limiti GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
 Ogni push su `main` pubblica anche un aggiornamento OTA (`eas-update.yml`), tranne
 quando `runtimeVersion` non ha ancora un APK pubblicato o quando `android/`, `modules/`
@@ -13,9 +34,8 @@ nuovo APK. In quel caso aumentare versione, `versionCode` e `runtimeVersion` e c
 
 Il procedimento manuale qui sotto resta valido come alternativa.
 
-La repository e le release sono **private**. Pubblicare una bozza di release non
-cambia la visibilità della repository: scaricano gli allegati solo gli account
-autorizzati. Non pubblicare mirror o collegamenti anonimi senza consenso del proprietario.
+La repository e le release sono **pubbliche**. Gli APK ufficiali sono scaricabili
+senza login dalla pagina delle release; non includere credenziali o dati privati.
 
 ## 1. Preparare il sorgente
 

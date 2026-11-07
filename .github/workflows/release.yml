@@ -9,6 +9,15 @@ on:
         description: Existing version tag to publish
         required: true
         type: string
+      builder:
+        description: Build on GitHub without Expo build quota, or use EAS cloud
+        type: choice
+        options: [github, eas]
+        default: github
+      publish:
+        description: Publish the verified APK (disable for a build-only check)
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -16,7 +25,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # The EAS free queue can exceed 45 minutes in the evening.
     timeout-minutes: 120
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -30,6 +38,17 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools'
+      - name: Install Android SDK and NDK for local builds
+        if: inputs.builder != 'eas'
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "build-tools;36.0.0" "build-tools;35.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
       - run: npm ci
       - run: npm run check
       - name: Check tag, version and release notes
@@ -50,6 +69,7 @@ jobs:
             exit 1
           fi
       - name: Build Android with EAS
+        if: inputs.builder == 'eas'
         id: eas-build
         run: |
           build_json="$(npx eas-cli build --platform android --profile release --non-interactive --wait --json)"
@@ -59,18 +79,39 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       - name: Download APK
+        if: inputs.builder == 'eas'
         run: |
           mkdir -p release-output
           download_json="$(npx eas-cli build:download --build-id "${{ steps.eas-build.outputs.build_id }}" --non-interactive --json)"
           apk_path="$(printf '%s' "$download_json" | jq -r '.path')"
           test -n "$apk_path" && test "$apk_path" != "null"
           mv "$apk_path" "release-output/MusicBank-${RELEASE_TAG}.apk"
-          (cd release-output && sha256sum "MusicBank-${RELEASE_TAG}.apk" > "MusicBank-${RELEASE_TAG}.apk.sha256")
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      - name: Build signed APK on GitHub (no EAS cloud build)
+        if: inputs.builder != 'eas'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_LOCAL_BUILD_WORKINGDIR: ${{ runner.temp }}/eas-local-build
+        run: |
+          mkdir -p release-output
+          npx --yes eas-cli build --platform android --profile release --local --non-interactive --freeze-credentials \
+            --output "$PWD/release-output/MusicBank-${RELEASE_TAG}.apk"
       - name: Verify APK signing certificate
         run: node tools/verify-apk-certificate.mjs "release-output/MusicBank-${RELEASE_TAG}.apk"
+      - name: Generate checksum
+        working-directory: release-output
+        run: sha256sum "MusicBank-${RELEASE_TAG}.apk" > "MusicBank-${RELEASE_TAG}.apk.sha256"
+      - name: Save verified build-only APK
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: music-bank-signed-build-check
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 3
       - name: Publish GitHub release
+        if: github.event_name != 'workflow_dispatch' || inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

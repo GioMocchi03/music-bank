@@ -17,6 +17,14 @@ Il numero di build Android è distinto dalla versione leggibile.
 - Il ripristino della libreria cede il controllo tra i file delle tracce e completa
   le copertine per blocco, senza una seconda scansione sincrona di tutti i brani.
 
+### Build
+
+- Gli APK delle release vengono compilati sul runner GitHub con EAS locale,
+  senza consumare la quota build Expo e mantenendo la firma ufficiale. Il rilancio
+  manuale può verificare un APK senza pubblicarlo; EAS cloud resta selezionabile.
+- Le verifiche Android delle PR compilano e testano su GitHub; la preview EAS
+  cloud aggiuntiva parte solo se richiesta manualmente, non a ogni push.
+
 ## 1.3.19 — 2026-11-06 · build 33
 
 Include tutte le novità della 1.3.18, che non è mai stata pubblicata come APK.
