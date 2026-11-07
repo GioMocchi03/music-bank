@@ -7,6 +7,9 @@ Il numero di build Android è distinto dalla versione leggibile.
 
 ### Migliorato
 
+- La Home sceglie il suggerimento dai metadati e dalla cronologia locali, senza
+  aspettare tutte le tracce. Durante il ripristino non mostra più «Collega
+  Navidrome» né il primo album alfabetico come suggerimenti provvisori.
 - Il primo passaggio tra Libreria, Ricerca e Impostazioni non avvia più la
   normalizzazione di tutti i brani in un unico blocco. Ricerca, preferiti, anni e
   lookup dei brani vengono preparati insieme, a piccoli blocchi fuori dal render,
