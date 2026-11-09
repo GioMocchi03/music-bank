@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.FileNotFoundException
 import java.net.InetSocketAddress
@@ -45,8 +46,8 @@ class AutoArtworkTest {
     server.stop(0)
   }
 
-  private fun cover(id: String, salt: String) =
-    "http://127.0.0.1:${server.address.port}/rest/getCoverArt.view?u=alice&t=token$salt&s=$salt&v=1.16.1&c=music-bank&f=json&id=$id&size=500"
+  private fun cover(id: String, salt: String, user: String = "alice") =
+    "http://127.0.0.1:${server.address.port}/rest/getCoverArt.view?u=$user&t=token$salt&s=$salt&v=1.16.1&c=music-bank&f=json&id=$id&size=500"
 
   private fun read(uri: Uri): ByteArray =
     ParcelFileDescriptor.AutoCloseInputStream(provider.openFile(uri, "r")).use { it.readBytes() }
@@ -87,5 +88,26 @@ class AutoArtworkTest {
     assertFalse(failure.message.orEmpty().contains("token"))
     assertThrows(SecurityException::class.java) { provider.openFile(error, "w") }
     assertThrows(SecurityException::class.java) { provider.openFile(error, "rw") }
+  }
+
+  @Test fun usersAccountSwitchAndLogoutDoNotShareOrKeepArtwork() {
+    val context = RuntimeEnvironment.getApplication()
+    val alice = AutoArtwork.localUri(cover("al-user", "a1"))!!
+    val bob = AutoArtwork.localUri(cover("al-user", "b1", user = "bob"))!!
+    assertNotEquals(alice, bob)
+    // Unsigned artwork from another host is not an account switch.
+    AutoArtwork.localUri("https://radio.test/logo.png")
+    assertNotNull(AutoArtwork.remoteUrl(bob.lastPathSegment!!))
+    // Bob signing in drops Alice's signed URL: nothing is fetched with old credentials.
+    assertNull(AutoArtwork.remoteUrl(alice.lastPathSegment!!))
+    assertThrows(FileNotFoundException::class.java) { provider.openFile(alice, "r") }
+    assertArrayEquals(image, read(bob))
+    assertTrue(queries.single().contains("u=bob&"))
+
+    AutoArtwork.clear(context)
+    assertFalse(AutoArtwork.cacheDir(context).exists())
+    assertNull(AutoArtwork.remoteUrl(bob.lastPathSegment!!))
+    assertThrows(FileNotFoundException::class.java) { provider.openFile(bob, "r") }
+    assertEquals(1, hits.get())
   }
 }

@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.os.Looper
 import androidx.media3.common.MediaItem
 import com.google.common.util.concurrent.ListenableFuture
+import io.servergio.giomusic.AutoArtwork
 import io.servergio.giomusic.MusicBankAutoService
 import org.junit.Assert.*
 import org.junit.Test
@@ -84,6 +85,32 @@ class MusicBankAutoServicePlaybackTest {
       assertEquals("song:one", browser.getMediaItemAt(2).mediaId)
       browser.removeMediaItem(2)
       settle { browser.mediaItemCount == 2 }
+    } finally {
+      browser.release()
+      service.destroy()
+    }
+  }
+
+  @Test fun logoutForgetsSignedArtworkAndClearsTheCache() {
+    val context = RuntimeEnvironment.getApplication()
+    val catalogue = File(context.filesDir, "music-bank-auto-catalog.json").apply { writeText(json) }
+    val service = Robolectric.buildService(MusicBankAutoService::class.java).create()
+    val controllerInfo = MediaSession.ControllerInfo.createTestOnlyControllerInfo(
+      "com.example.other", 0, 0, 0, 0, false, Bundle.EMPTY, false,
+    )
+    val session = service.get().onGetSession(controllerInfo)!!
+    val browser = MediaBrowser.Builder(context, session.token).buildAsync().await()
+    try {
+      val album = browser.getChildren("music-bank-albums", 0, 100, null).await().value!!.single()
+      val key = album.mediaMetadata.artworkUri!!.lastPathSegment!!
+      assertNotNull(AutoArtwork.remoteUrl(key))
+      val cached = File(AutoArtwork.cacheDir(context).apply { mkdirs() }, key).apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+      // App logout: clearAndroidAutoCatalog() deletes the file, then refreshes the service.
+      catalogue.delete()
+      MusicBankAutoService.refreshCatalogue()
+      settle { AutoArtwork.remoteUrl(key) == null && !cached.exists() }
+      settle { browser.getChildren("music-bank-albums", 0, 100, null).await().value!!.isEmpty() }
     } finally {
       browser.release()
       service.destroy()

@@ -12,6 +12,7 @@ import androidx.media3.session.SessionToken
 import com.facebook.react.bridge.*
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONArray
+import java.io.File
 
 /** Every command and state read uses the same session as Android Auto. */
 class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
@@ -130,6 +131,8 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
   fun refreshCatalog(promise: Promise) {
     handler.post {
       try {
+        // Logout deletes the catalogue, even while the Auto service is not running.
+        if (!File(context.filesDir, MusicBankAutoService.CATALOGUE_FILE).exists()) AutoArtwork.clear(context)
         MusicBankAutoService.refreshCatalogue()
         promise.resolve(true)
       } catch (error: Exception) { promise.reject("ANDROID_AUTO_CATALOG", error) }

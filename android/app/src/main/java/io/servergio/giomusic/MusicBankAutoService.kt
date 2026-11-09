@@ -75,6 +75,7 @@ class MusicBankAutoService : MediaLibraryService() {
       return
     }
     attemptedStamp = stamp
+    if (stamp == -1L) AutoArtwork.clear(this)
     val next = AutoCatalogue().apply { load(file) }
     mainHandler.post {
       if (destroyed) return@post
@@ -748,7 +749,7 @@ class MusicBankAutoService : MediaLibraryService() {
   )
 
   companion object {
-    private const val CATALOGUE_FILE = "music-bank-auto-catalog.json"
+    internal const val CATALOGUE_FILE = "music-bank-auto-catalog.json"
     private const val ROOT_ID = "music-bank-root"
     private const val ALBUMS_ID = "music-bank-albums"
     private const val ARTISTS_ID = "music-bank-artists"
