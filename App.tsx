@@ -478,7 +478,6 @@ function MusicBankApp() {
       const preview = await previewPromise;
       if (!active) return;
       if (preview && saved) {
-        hasCachedLibraryRef.current = true;
         lastFullSyncAtRef.current = preview.syncedAt;
         setAlbums(preview.albums);
         setArtists(preview.artists);
@@ -497,6 +496,8 @@ function MusicBankApp() {
       await loadLibrary().then(async (snapshot) => {
         if (!active || !snapshot || !saved) return;
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
+        hasCachedLibraryRef.current = true;
+        lastFullSyncAtRef.current = snapshot.syncedAt;
         setSongs(snapshot.songs);
         startupMark('library-loaded');
         // Una sync di avvio imminente rigenera già il catalogo: evitiamo il doppio lavoro.
