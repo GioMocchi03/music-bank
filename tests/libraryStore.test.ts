@@ -99,7 +99,7 @@ function webStore() {
       if (name === 'expo-file-system') return {};
       if (name.includes('NavidromeClient')) return { cleanGenres: (genres: unknown) => genres };
       if (name.includes('backgroundWork')) return { yieldToEvents };
-      if (name.includes('async-storage')) return { default: {
+      if (name.includes('async-storage')) return { __esModule: true, default: {
         getItem: async (key: string) => legacy.get(key) ?? null,
         setItem: async () => { throw new Error('Non usare localStorage per la libreria'); },
         removeMany: async (keys: string[]) => {
@@ -120,11 +120,11 @@ function webStore() {
   return { ...exports, values, legacy, events, abort: () => { abortWrite = true; } };
 }
 
-const webSnapshot = {
-  albums: [{ id: 'album', coverUrl: 'cover-from-album' }], artists: [], genres: [],
+const webSnapshot: LibrarySnapshot = {
+  albums: [{ id: 'album', name: 'Album', artist: 'Artist', coverUrl: 'cover-from-album' }], artists: [], genres: [],
   playlists: [], radios: [], syncedAt: 42,
   songs: [{ id: 'song', title: 'Track', albumId: 'album', coverUrl: 'old-cover' }],
-} as LibrarySnapshot;
+};
 
 test('desktop salva in IndexedDB e restituisce la libreria normalizzata dopo il commit', async () => {
   const store = webStore();
