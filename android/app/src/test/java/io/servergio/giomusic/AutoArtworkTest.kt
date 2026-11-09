@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
 class AutoArtworkTest {
   private val image = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 1, 2, 3)
+  private val logo = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 9, 9)
   private val hits = AtomicInteger()
   private val queries = mutableListOf<String>()
   private lateinit var server: HttpServer
@@ -36,6 +37,12 @@ class AutoArtworkTest {
         exchange.responseHeaders.add("Content-Type", if (json) "application/json" else "image/png")
         exchange.sendResponseHeaders(200, body.size.toLong())
         exchange.responseBody.use { it.write(body) }
+      }
+      createContext("/logo.png") { exchange ->
+        hits.incrementAndGet()
+        exchange.responseHeaders.add("Content-Type", "image/png")
+        exchange.sendResponseHeaders(200, logo.size.toLong())
+        exchange.responseBody.use { it.write(logo) }
       }
       start()
     }
@@ -108,5 +115,30 @@ class AutoArtworkTest {
     assertThrows(FileNotFoundException::class.java) { provider.openFile(alice, "r") }
     assertThrows(FileNotFoundException::class.java) { provider.openFile(bob, "r") }
     assertEquals(2, hits.get())
+  }
+
+  @Test fun mixedAccountQueueLoadsEveryCoverIndependently() {
+    val context = RuntimeEnvironment.getApplication()
+    // Phone queue order: offline download from Alice, current account Bob, an unsigned radio logo.
+    val queue = listOf(
+      cover("al-mixed", "q1"),
+      cover("al-mixed", "q2", user = "bob"),
+      "http://localhost:${server.address.port}/logo.png",
+      cover("al-mixed", "q3"),
+    ).map { AutoArtwork.localUri(it)!! }
+    assertEquals(queue[0], queue[3])
+    assertEquals(3, queue.toSet().size)
+    assertArrayEquals(image, read(queue[0]))
+    assertArrayEquals(image, read(queue[1]))
+    assertArrayEquals(logo, read(queue[2]))
+    assertEquals(3, hits.get())
+    synchronized(queries) {
+      assertTrue(queries[0].contains("u=alice&t=tokenq3&s=q3"))
+      assertTrue(queries[1].contains("u=bob&t=tokenq2&s=q2"))
+    }
+    // Three independent cache entries: later reads never hit the network again.
+    assertEquals(queue.toSet().map { it.lastPathSegment }.toSet(), AutoArtwork.cacheDir(context).list()!!.toSet())
+    queue.forEach { read(it) }
+    assertEquals(3, hits.get())
   }
 }
