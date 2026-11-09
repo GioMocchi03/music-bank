@@ -24,6 +24,7 @@ const SONG_CHUNK_SIZE = 500;
 // IndexedDB per la cache web e Windows (WebView2).
 const WEB_DB_NAME = 'music-bank-library';
 const WEB_DB_STORE = 'snapshots';
+const WEB_PREVIEW_KEY = `${WEB_KEY}.preview`;
 
 function openWebDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -60,16 +61,26 @@ async function webDatabaseOperation<T>(
   }
 }
 
-function saveWebLibrary(value: string): Promise<IDBValidKey> {
-  return webDatabaseOperation('readwrite', store => store.put(value, WEB_KEY));
+function saveWebLibrary(value: string, preview: LibraryPreview): Promise<IDBValidKey> {
+  return webDatabaseOperation('readwrite', (store) => {
+    store.put(JSON.stringify(preview), WEB_PREVIEW_KEY);
+    return store.put(value, WEB_KEY);
+  });
 }
 
 function readWebLibrary(): Promise<string | undefined> {
   return webDatabaseOperation('readonly', store => store.get(WEB_KEY));
 }
 
+function readWebLibraryPreview(): Promise<string | undefined> {
+  return webDatabaseOperation('readonly', store => store.get(WEB_PREVIEW_KEY));
+}
+
 function clearWebLibrary(): Promise<undefined> {
-  return webDatabaseOperation('readwrite', store => store.delete(WEB_KEY));
+  return webDatabaseOperation('readwrite', (store) => {
+    store.delete(WEB_PREVIEW_KEY);
+    return store.delete(WEB_KEY);
+  });
 }
 
 export type LibrarySnapshot = {
@@ -242,7 +253,7 @@ export async function saveLibrary(
 ): Promise<LibrarySnapshot> {
   if (Platform.OS === 'web') {
     const stored = { ...snapshot, songs: snapshot.songs.map(stripSongCover) };
-    await saveWebLibrary(JSON.stringify(stored));
+    await saveWebLibrary(JSON.stringify(stored), snapshotToPreview(snapshot));
     try {
       await AsyncStorage.removeMany([WEB_KEY, LEGACY_KEY]);
     } catch {}
@@ -433,11 +444,24 @@ function snapshotToPreview(snapshot: LibrarySnapshot): LibraryPreview {
 
 /**
  * Carica soltanto i dati necessari al primo rendering. Su Android legge un
- * singolo file di metadati e non apre i blocchi delle tracce; questi possono
+ * singolo file di metadati (un record separato su web) e non apre le tracce; queste possono
  * essere caricati in background con loadLibrary() dopo che la Home è visibile.
  */
 export async function loadLibraryPreview(): Promise<LibraryPreview | null> {
-  if (Platform.OS !== 'web') {
+  if (Platform.OS === 'web') {
+    try {
+      const value = await readWebLibraryPreview();
+      if (value) {
+        const parsed = JSON.parse(value) as LibraryPreview;
+        if (!Number.isSafeInteger(parsed.songCount) || parsed.songCount < 0) {
+          throw new Error('Anteprima della libreria non valida.');
+        }
+        return { ...snapshotToPreview(normalizeLibrary({ ...parsed, songs: [] })), songCount: parsed.songCount };
+      }
+    } catch {
+      // Le cache precedenti o corrotte passano dal ripristino completo una sola volta.
+    }
+  } else {
     try {
       const preview = await loadChunkedLibraryPreview();
       if (preview) return preview;
@@ -447,5 +471,12 @@ export async function loadLibraryPreview(): Promise<LibraryPreview | null> {
   }
 
   const snapshot = await loadLibrary();
-  return snapshot ? snapshotToPreview(snapshot) : null;
+  if (!snapshot) return null;
+  const preview = snapshotToPreview(snapshot);
+  if (Platform.OS === 'web') {
+    try {
+      await webDatabaseOperation('readwrite', store => store.put(JSON.stringify(preview), WEB_PREVIEW_KEY));
+    } catch {}
+  }
+  return preview;
 }

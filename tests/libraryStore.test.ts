@@ -62,6 +62,7 @@ function webStore() {
   const values = new Map<string, string>();
   const legacy = new Map<string, string>();
   const events: string[] = [];
+  const reads: string[] = [];
   let abortWrite = false;
   let openFailure = false;
   const exports = {} as {
@@ -74,20 +75,24 @@ function webStore() {
     close() { events.push('close'); },
     transaction(_store: string, mode: string) {
       const tx: any = { error: new Error('Commit fallito') };
+      let pending = 0;
+      const commits: Array<() => void> = [];
       const request = (result: unknown, commit = () => {}) => {
         const req: any = { result };
+        pending++;
+        commits.push(commit);
         setImmediate(() => {
-          req.onsuccess();
-          setImmediate(() => {
+          req.onsuccess?.();
+          if (--pending === 0) setImmediate(() => {
             if (mode === 'readwrite' && abortWrite) tx.onabort();
-            else { commit(); events.push('commit'); tx.oncomplete(); }
+            else { commits.forEach((apply) => apply()); events.push('commit'); tx.oncomplete(); }
           });
         });
         return req;
       };
       tx.objectStore = () => ({
         put: (value: string, key: string) => request(key, () => { values.set(key, value); }),
-        get: (key: string) => request(values.get(key)),
+        get: (key: string) => { reads.push(key); return request(values.get(key)); },
         delete: (key: string) => request(undefined, () => { values.delete(key); }),
       });
       return tx;
@@ -118,7 +123,7 @@ function webStore() {
       },
     },
   });
-  return { ...exports, values, legacy, events, abort: () => { abortWrite = true; }, failOpen: () => { openFailure = true; } };
+  return { ...exports, values, legacy, events, reads, abort: () => { abortWrite = true; }, failOpen: () => { openFailure = true; } };
 }
 
 const webSnapshot: LibrarySnapshot = {
@@ -144,7 +149,7 @@ test('desktop migra la cache legacy con removeMany e cancella entrambe le cache'
   store.legacy.set('gio-music.library.v2', JSON.stringify(webSnapshot));
   assert.equal((await store.loadLibrary())?.songs[0].coverUrl, 'cover-from-album');
   assert.equal(store.legacy.size, 0);
-  assert.equal(store.values.size, 1);
+  assert.equal(store.values.size, 2);
   await store.clearLibrary();
   assert.equal(store.values.size, 0);
   assert.equal(await store.loadLibrary(), null);
@@ -167,4 +172,24 @@ test('desktop ripristina la cache legacy anche se IndexedDB non si apre', async 
   assert.equal((await store.loadLibrary())?.songs[0].coverUrl, 'cover-from-album');
   assert.equal(store.legacy.size, 1);
   assert.equal(store.values.size, 0);
+});
+
+test('desktop legge soltanto i metadati per la Home senza aprire tutte le tracce', async () => {
+  const store = webStore();
+  await store.saveLibrary(webSnapshot);
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+  assert.deepEqual(store.reads, ['gio-music.library.v3.preview']);
+  const preview = JSON.parse(store.values.get('gio-music.library.v3.preview')!);
+  assert.equal('songs' in preview, false);
+  assert.equal(preview.albums[0].coverUrl, 'cover-from-album');
+});
+
+test('desktop aggiunge i metadati alle cache IndexedDB precedenti al primo ripristino', async () => {
+  const store = webStore();
+  store.values.set('gio-music.library.v3', JSON.stringify(webSnapshot));
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+  assert.ok(store.values.has('gio-music.library.v3.preview'));
+  store.reads.length = 0;
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+  assert.deepEqual(store.reads, ['gio-music.library.v3.preview']);
 });
