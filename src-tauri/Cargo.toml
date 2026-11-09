@@ -1,6 +1,6 @@
 [package]
 name = "music-bank"
-version = "1.3.9"
+version = "1.3.19"
 description = "Music Bank desktop"
 authors = ["Music Bank"]
 edition = "2021"

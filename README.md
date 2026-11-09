@@ -74,6 +74,7 @@ Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 | Piattaforma | Stato |
 | --- | --- |
 | Android | APK release; Android 7 / API 24 o superiore. ARM64, ARM 32 bit, x86 e x86_64. |
+| Windows | App Tauri/WebView2 con frontend condiviso, cache IndexedDB ed equalizzatore Web Audio. Installer non firmato disponibile come artefatto Actions; niente download nativi o Android Auto. Vedi [sviluppo desktop](docs/DEVELOPMENT.md#app-desktop-windows-tauri). |
 | Web | Interfaccia per sviluppo/verifica; niente download nativi o Android Auto. Il server deve consentire CORS. |
 | iOS | Sorgenti condivisi ed export JavaScript verificati; nessuna IPA o pubblicazione App Store. Serve un build iOS dedicato. |
 

@@ -72,7 +72,6 @@ function clearWebLibrary(): Promise<undefined> {
   return webDatabaseOperation('readwrite', store => store.delete(WEB_KEY));
 }
 
-
 export type LibrarySnapshot = {
   albums: Album[];
   artists: Artist[];

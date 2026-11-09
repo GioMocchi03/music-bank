@@ -1,9 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Music Bank",
-  "version": "1.3.17",
+  "version": "../package.json",
   "identifier": "io.servergio.musicbank.desktop",
   "build": {
+    "beforeDevCommand": "npm run web -- --host localhost --port 8081",
+    "devUrl": "http://localhost:8081",
+    "beforeBuildCommand": "npm run export:desktop",
     "frontendDist": "../dist"
   },
   "app": {
