@@ -15,6 +15,7 @@ const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../App.tsx',
 const app = source.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'MusicBankApp')!;
 const home = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'HomeScreen')!;
 const bootstrap = app.body!.statements.find((node) => node.getText(source).includes("startupMark('bootstrap-start')"))!;
+const startupSync = app.body!.statements.find((node) => node.getText(source).includes('const cacheAge = Date.now() - lastFullSyncAtRef.current'))!;
 const selection = app.body!.statements.find((node) => node.getText(source).includes('const selected = chooseFeaturedAlbum('))!;
 const featured = app.body!.statements.find((node) => ts.isVariableStatement(node)
   && node.declarationList.declarations.some((declaration) => declaration.name.getText(source) === 'featuredAlbum'))!;
@@ -34,9 +35,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function startBootstrap(options: { saved?: boolean; brokenPreview?: boolean; brokenHistory?: boolean } = {}) {
-  const complete = deferred<null>();
+function startBootstrap(options: { saved?: boolean; brokenPreview?: boolean; brokenHistory?: boolean; syncedAt?: number } = {}) {
+  const complete = deferred<{ songs: unknown[]; syncedAt: number } | null>();
   const state: Record<string, any> = {};
+  const refs = { hasCachedLibraryRef: { current: false }, lastFullSyncAtRef: { current: 0 } };
   const setters = Object.fromEntries([
     'History', 'HistoryReady', 'OfflineTracks', 'PersonalPlaylistIds', 'Preferences', 'PreferencesReady',
     'Connection', 'AuthenticatedUsername', 'ActiveSourceKey', 'Connected', 'Message', 'Albums', 'Artists',
@@ -48,7 +50,7 @@ function startBootstrap(options: { saved?: boolean; brokenPreview?: boolean; bro
     loadConnection: async () => options.saved === false ? null : { serverUrl: 'https://music.example.org', username: 'gio' },
     loadLibraryPreview: async () => {
       if (options.brokenPreview) throw new Error('Corrupt preview');
-      return { albums: [first, favorite], artists: [], genres: [], playlists: [], radios: [], syncedAt: 1 };
+      return { albums: [first, favorite], artists: [], genres: [], playlists: [], radios: [], syncedAt: options.syncedAt ?? 1 };
     },
     loadLibrary: () => complete.promise,
     loadHistory: async () => {
@@ -59,9 +61,22 @@ function startBootstrap(options: { saved?: boolean; brokenPreview?: boolean; bro
     loadPreferences: async () => ({ defaultPlaybackRate: 1 }),
     connectionSourceKey: () => 'source', NavidromeClient: class {},
     player: {}, offlineTracksRef: {}, clientRef: {}, restoredConnectionRef: {},
-    hasCachedLibraryRef: {}, lastFullSyncAtRef: {}, isAlbumFolderPlaylist: () => false,
+    ...refs, isAlbumFolderPlaylist: () => false, AUTO_SYNC_FRESHNESS_MS: 300_000,
+    ensureAndroidAutoCatalog: async () => {},
   });
-  return { state, complete };
+  return { state, complete, refs };
+}
+
+function startAutomaticSync(boot: ReturnType<typeof startBootstrap>) {
+  const calls: string[] = [];
+  vm.runInNewContext(compile(startupSync.getText(source)), {
+    ...boot.refs, bootstrapReady: boot.state.BootstrapReady,
+    startupSyncStartedRef: { current: false }, restoredConnectionRef: { current: { username: 'gio' } },
+    AUTO_SYNC_FRESHNESS_MS: 300_000, setMessage() {},
+    useEffect: (run: () => unknown) => run(),
+    syncLibrary: () => { calls.push('sync'); }, verifyConnection: () => { calls.push('ping'); },
+  });
+  return calls;
 }
 
 function selectFeatured(overrides: Record<string, unknown> = {}) {
@@ -101,6 +116,25 @@ test('la preview rende pronta la Home prima delle tracce e del bootstrap complet
   boot.complete.resolve(null);
   await new Promise(setImmediate);
   assert.equal(boot.state.BootstrapReady, true);
+});
+
+test('una preview recente senza snapshot completo avvia la sincronizzazione di recupero', async () => {
+  const boot = startBootstrap({ syncedAt: Date.now() });
+  await new Promise(setImmediate);
+  assert.deepEqual(boot.state.Albums, [first, favorite]);
+  boot.complete.resolve(null);
+  await new Promise(setImmediate);
+  assert.equal(boot.state.BootstrapReady, true);
+  assert.deepEqual(startAutomaticSync(boot), ['sync']);
+});
+
+test('uno snapshot completo recente, anche vuoto, evita una sincronizzazione inutile', async () => {
+  const syncedAt = Date.now();
+  const boot = startBootstrap({ syncedAt });
+  boot.complete.resolve({ songs: [], syncedAt });
+  await new Promise(setImmediate);
+  assert.equal(boot.state.BootstrapReady, true);
+  assert.deepEqual(startAutomaticSync(boot), ['ping']);
 });
 
 test('attende preferenze e cronologia ma non cambia una scelta già visibile', () => {

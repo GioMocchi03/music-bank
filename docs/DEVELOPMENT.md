@@ -2,7 +2,7 @@
 
 ## Ambiente
 
-Expo SDK 57, React Native 0.86.2, React 19.2.3, TypeScript 6, Hermes su Android.
+Expo SDK 58, React Native 0.88.1, React 19.3.0, TypeScript 6, Hermes su Android.
 Usare Node.js 24 LTS (`.nvmrc`) e `npm ci` per rispettare il lockfile.
 
 ```bash
@@ -47,6 +47,38 @@ reali e alias `subst` per i sorgenti React Native (errore "different roots").
 Il build locale iniziale usa sorgenti sul percorso reale e alias senza spazi solo
 per l'SDK; non richiede patch alle dipendenze.
 
+## App desktop Windows (Tauri)
+
+La versione desktop esegue il frontend web condiviso in WebView2: non emula
+l'APK e non usa i moduli nativi Android. Le correzioni alla Home, alla ricerca e
+alla libreria condivisa sono incluse anche qui; Media3 e Android Auto restano Android.
+La cache della libreria desktop usa IndexedDB, con migrazione dalla vecchia cache
+AsyncStorage. L'equalizzatore desktop usa Web Audio; il server deve consentire CORS
+anche per gli stream audio. I download nativi offline non sono disponibili su desktop.
+
+Su Windows servono Node.js 24 LTS, Rust stable MSVC, Visual Studio Build Tools con
+il carico di lavoro C++ e WebView2. Vedi i [prerequisiti Tauri](https://v2.tauri.app/start/prerequisites/).
+
+```bash
+npm ci
+npm run desktop
+```
+
+`desktop` avvia automaticamente Expo web su localhost:8081 e la finestra Tauri.
+Per creare l'installer Windows:
+
+```bash
+npm run build:windows
+```
+
+Tauri rigenera prima `dist` con `export:desktop`, poi compila usando `Cargo.lock`.
+L'installer NSIS si trova in `src-tauri/target/release/bundle/nsis/`.
+La versione mostrata dall'app desktop viene letta da `package.json`.
+Il workflow **Music Bank Windows** verifica l'app e costruisce l'installer su Windows;
+l'artefatto **Music-Bank-Windows** si scarica dalla pagina del run in Actions.
+L'installer non è firmato con un certificato Windows: SmartScreen può avvisare.
+La build automatica non sostituisce una prova di installazione, login e ascolto su Windows.
+
 ## Altre piattaforme e controlli
 
 L'export iOS verifica il bundle, non Xcode o una IPA. La cartella iOS non è mantenuta:
@@ -65,6 +97,6 @@ nativi/Android Auto e richiede CORS corretto sul server.
 I test Node usano adapter simulati: non sostituiscono prove Android di file system,
 rete, background audio e Auto. Nelle PR dichiarare esattamente cosa è stato testato.
 
-Riferimenti: [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/),
+Riferimenti: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/),
 [Android SDK](https://developer.android.com/studio),
 [OpenSubsonic](https://opensubsonic.netlify.app/docs/).

@@ -54,3 +54,142 @@ test('conserva i controlli contro chunk mancanti, corrotti e conteggi errati', a
   const empty = await reader([]).read(0);
   assert.equal(empty.songs.length, 0);
 });
+
+function webStore() {
+  const compiled = ts.transpileModule(readFileSync(new URL('../src/storage/libraryStore.ts', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const values = new Map<string, string>();
+  const legacy = new Map<string, string>();
+  const events: string[] = [];
+  const reads: string[] = [];
+  let abortWrite = false;
+  let openFailure = false;
+  const exports = {} as {
+    saveLibrary(snapshot: LibrarySnapshot): Promise<LibrarySnapshot>;
+    loadLibrary(): Promise<LibrarySnapshot | null>;
+    loadLibraryPreview(): Promise<{ songCount: number } | null>;
+    clearLibrary(): Promise<void>;
+  };
+  const db = {
+    close() { events.push('close'); },
+    transaction(_store: string, mode: string) {
+      const tx: any = { error: new Error('Commit fallito') };
+      let pending = 0;
+      const commits: Array<() => void> = [];
+      const request = (result: unknown, commit = () => {}) => {
+        const req: any = { result };
+        pending++;
+        commits.push(commit);
+        setImmediate(() => {
+          req.onsuccess?.();
+          if (--pending === 0) setImmediate(() => {
+            if (mode === 'readwrite' && abortWrite) tx.onabort();
+            else { commits.forEach((apply) => apply()); events.push('commit'); tx.oncomplete(); }
+          });
+        });
+        return req;
+      };
+      tx.objectStore = () => ({
+        put: (value: string, key: string) => request(key, () => { values.set(key, value); }),
+        get: (key: string) => { reads.push(key); return request(values.get(key)); },
+        delete: (key: string) => request(undefined, () => { values.delete(key); }),
+      });
+      return tx;
+    },
+  };
+  vm.runInNewContext(compiled, {
+    exports,
+    require: (name: string) => {
+      if (name === 'react-native') return { Platform: { OS: 'web' } };
+      if (name === 'expo-file-system') return {};
+      if (name.includes('NavidromeClient')) return { cleanGenres: (genres: unknown) => genres };
+      if (name.includes('backgroundWork')) return { yieldToEvents };
+      if (name.includes('async-storage')) return { __esModule: true, default: {
+        getItem: async (key: string) => legacy.get(key) ?? null,
+        setItem: async () => { throw new Error('Non usare localStorage per la libreria'); },
+        removeMany: async (keys: string[]) => {
+          events.push('remove-legacy');
+          keys.forEach((key) => legacy.delete(key));
+        },
+      } };
+      throw new Error(`Import inatteso: ${name}`);
+    },
+    indexedDB: {
+      open: () => {
+        const req: any = { result: db, error: new Error('IndexedDB non disponibile') };
+        setImmediate(() => openFailure ? req.onerror() : req.onsuccess());
+        return req;
+      },
+    },
+  });
+  return { ...exports, values, legacy, events, reads, abort: () => { abortWrite = true; }, failOpen: () => { openFailure = true; } };
+}
+
+const webSnapshot: LibrarySnapshot = {
+  albums: [{ id: 'album', name: 'Album', artist: 'Artist', coverUrl: 'cover-from-album' }], artists: [], genres: [],
+  playlists: [], radios: [], syncedAt: 42,
+  songs: [{ id: 'song', title: 'Track', albumId: 'album', coverUrl: 'old-cover' }],
+};
+
+test('desktop salva in IndexedDB e restituisce la libreria normalizzata dopo il commit', async () => {
+  const store = webStore();
+  const saved = await store.saveLibrary(webSnapshot);
+  assert.equal(saved.songs[0].coverUrl, 'cover-from-album');
+  assert.equal(saved.syncedAt, 42);
+  const persisted = JSON.parse(store.values.get('gio-music.library.v3')!);
+  assert.equal('coverUrl' in persisted.songs[0], false);
+  assert.deepEqual(store.events, ['commit', 'close', 'remove-legacy']);
+  assert.equal((await store.loadLibrary())?.songs[0].coverUrl, 'cover-from-album');
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+});
+
+test('desktop migra la cache legacy con removeMany e cancella entrambe le cache', async () => {
+  const store = webStore();
+  store.legacy.set('gio-music.library.v2', JSON.stringify(webSnapshot));
+  assert.equal((await store.loadLibrary())?.songs[0].coverUrl, 'cover-from-album');
+  assert.equal(store.legacy.size, 0);
+  assert.equal(store.values.size, 2);
+  await store.clearLibrary();
+  assert.equal(store.values.size, 0);
+  assert.equal(await store.loadLibrary(), null);
+});
+
+test('desktop conserva la cache legacy se la transazione IndexedDB fallisce', async () => {
+  const store = webStore();
+  store.legacy.set('gio-music.library.v3', JSON.stringify(webSnapshot));
+  store.abort();
+  await assert.rejects(store.saveLibrary(webSnapshot), /Commit fallito/);
+  assert.equal(store.values.size, 0);
+  assert.equal(store.legacy.size, 1);
+  assert.deepEqual(store.events, ['close']);
+});
+
+test('desktop ripristina la cache legacy anche se IndexedDB non si apre', async () => {
+  const store = webStore();
+  store.legacy.set('gio-music.library.v3', JSON.stringify(webSnapshot));
+  store.failOpen();
+  assert.equal((await store.loadLibrary())?.songs[0].coverUrl, 'cover-from-album');
+  assert.equal(store.legacy.size, 1);
+  assert.equal(store.values.size, 0);
+});
+
+test('desktop legge soltanto i metadati per la Home senza aprire tutte le tracce', async () => {
+  const store = webStore();
+  await store.saveLibrary(webSnapshot);
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+  assert.deepEqual(store.reads, ['gio-music.library.v3.preview']);
+  const preview = JSON.parse(store.values.get('gio-music.library.v3.preview')!);
+  assert.equal('songs' in preview, false);
+  assert.equal(preview.albums[0].coverUrl, 'cover-from-album');
+});
+
+test('desktop aggiunge i metadati alle cache IndexedDB precedenti al primo ripristino', async () => {
+  const store = webStore();
+  store.values.set('gio-music.library.v3', JSON.stringify(webSnapshot));
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+  assert.ok(store.values.has('gio-music.library.v3.preview'));
+  store.reads.length = 0;
+  assert.equal((await store.loadLibraryPreview())?.songCount, 1);
+  assert.deepEqual(store.reads, ['gio-music.library.v3.preview']);
+});

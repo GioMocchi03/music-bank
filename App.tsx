@@ -59,6 +59,7 @@ import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './sr
 import { startupMark } from './src/utils/startupMetrics';
 import { emptyLibraryIndex, prepareLibraryIndex, type LibraryIndex } from './src/utils/libraryIndex';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
+import { configureWebEqualizer } from './src/player/webEqualizer';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
   OfflineTrack,
@@ -308,6 +309,7 @@ function MusicBankApp() {
   const expoPlayer = useAudioPlayer(null, {
     updateInterval: 750,
     keepAudioSessionActive: true,
+    crossOrigin: Platform.OS === 'web' ? 'anonymous' : undefined,
   });
   const nativeLoadFinishedRef = useRef(0);
   const nativeKnownSongsRef = useRef(new Map<string, Song>());
@@ -476,7 +478,6 @@ function MusicBankApp() {
       const preview = await previewPromise;
       if (!active) return;
       if (preview && saved) {
-        hasCachedLibraryRef.current = true;
         lastFullSyncAtRef.current = preview.syncedAt;
         setAlbums(preview.albums);
         setArtists(preview.artists);
@@ -495,6 +496,8 @@ function MusicBankApp() {
       await loadLibrary().then(async (snapshot) => {
         if (!active || !snapshot || !saved) return;
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
+        hasCachedLibraryRef.current = true;
+        lastFullSyncAtRef.current = snapshot.syncedAt;
         setSongs(snapshot.songs);
         startupMark('library-loaded');
         // Una sync di avvio imminente rigenera già il catalogo: evitiamo il doppio lavoro.
@@ -1572,6 +1575,8 @@ function MusicBankApp() {
         sessionId={audioSessionId}
         visible={eqOpen}
         onClose={() => setEqOpen(false)}
+        player={player}
+        trackKey={`${currentSong?.id ?? ''}:${playerStatus.isLoaded ? 'ready' : 'loading'}`}
       />
       <MoreActionsModal
         visible={actionsOpen}
@@ -3603,7 +3608,7 @@ function SwipeRightAction({ onAction, children }: { onAction: () => void; childr
   );
 }
 
-function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onClose: () => void; sessionId: number }) {
+function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { visible: boolean; onClose: () => void; sessionId: number; player: unknown; trackKey: string }) {
   const [enabled, setEnabled] = useState(false);
   const [levels, setLevels] = useState([0, 0, 0, 0, 0]);
   const [frequencies, setFrequencies] = useState([60, 230, 910, 3600, 14000]);
@@ -3633,12 +3638,13 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
   }, [sessionId]);
 
   useEffect(() => {
-    if (Platform.OS !== 'android' || sessionId <= 0 || !GioConnectionStore) return;
     if (!settingsReady) return;
-    const applied = GioConnectionStore.configureEqualizer(sessionId, enabled, levels);
+    const applied = Platform.OS === 'android'
+      ? sessionId > 0 && !!GioConnectionStore && GioConnectionStore.configureEqualizer(sessionId, enabled, levels)
+      : Platform.OS === 'web' && configureWebEqualizer(player, enabled, levels, frequencies);
     setNotice(applied ? '' : 'Equalizzatore non applicabile alla sessione audio.');
     void AsyncStorage.setItem(EQUALIZER_STORAGE_KEY, JSON.stringify({ enabled, levels }));
-  }, [enabled, levels, sessionId, settingsReady]);
+  }, [enabled, frequencies, levels, player, sessionId, settingsReady, trackKey]);
 
   if (!visible) return null;
   return (
@@ -3649,7 +3655,7 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
         <View style={styles.eqHeader}>
           <View style={{ flex: 1 }}>
             <Text style={styles.sheetTitle}>Equalizzatore</Text>
-            <Text style={styles.sheetSubtitle}>{Platform.OS === 'android' ? 'Equalizzatore integrato nella riproduzione' : 'Non disponibile su questa piattaforma'}</Text>
+            <Text style={styles.sheetSubtitle}>{Platform.OS === 'android' ? 'Equalizzatore integrato nella riproduzione' : 'Equalizzatore Web Audio integrato nella riproduzione'}</Text>
           </View>
           <Pressable accessibilityRole="switch" accessibilityState={{ checked: enabled }} style={[styles.switch, enabled && styles.switchOn]} onPress={() => setEnabled((value) => !value)}>
             <View style={[styles.switchThumb, enabled && styles.switchThumbOn]} />
@@ -3662,11 +3668,11 @@ function EqualizerModal({ visible, onClose, sessionId }: { visible: boolean; onC
             <Text style={styles.trackSubtitle}>format=raw · maxBitRate=0 · volume digitale 100%</Text>
           </View>
         </View>
-        {Platform.OS === 'android' ? (
+        {Platform.OS === 'android' || Platform.OS === 'web' ? (
           <>
             <View style={styles.eqBands}>
               {frequencies.map((frequency, index) => (
-                <EqualizerBand key={`${frequency}-${index}`} frequency={frequency} value={levels[index] ?? 0} min={range.min} max={range.max} disabled={!enabled || sessionId <= 0} onChange={(value) => setLevels((current) => current.map((item, itemIndex) => itemIndex === index ? value : item))} />
+                <EqualizerBand key={`${frequency}-${index}`} frequency={frequency} value={levels[index] ?? 0} min={range.min} max={range.max} disabled={!enabled || (Platform.OS === 'android' && sessionId <= 0)} onChange={(value) => setLevels((current) => current.map((item, itemIndex) => itemIndex === index ? value : item))} />
               ))}
             </View>
             <Pressable style={styles.eqReset} onPress={() => setLevels(frequencies.map(() => 0))}>

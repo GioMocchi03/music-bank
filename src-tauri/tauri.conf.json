@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Music Bank",
+  "version": "../package.json",
+  "identifier": "io.servergio.musicbank.desktop",
+  "build": {
+    "beforeDevCommand": "npm run web -- --host localhost --port 8081",
+    "devUrl": "http://localhost:8081",
+    "beforeBuildCommand": "npm run export:desktop",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Music Bank",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "backgroundColor": "#101010"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"]
+  }
+}
