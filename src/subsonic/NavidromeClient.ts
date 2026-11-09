@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { md5 } from 'js-md5';
-import { normalizeServerUrl } from '../utils/connection';
+import { isAllowedServerUrl, normalizeServerUrl } from '../utils/connection';
 
 export type NavidromeConnection = {
   serverUrl: string;
@@ -271,10 +271,7 @@ export class NavidromeClient {
 
   constructor(private readonly connection: NavidromeConnection) {
     this.baseUrl = normalizeServerUrl(connection.serverUrl);
-    if (
-      !/^https:\/\//i.test(this.baseUrl) &&
-      !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(this.baseUrl)
-    ) {
+    if (!isAllowedServerUrl(this.baseUrl)) {
       throw new Error('Per sicurezza il server deve usare HTTPS.');
     }
   }
