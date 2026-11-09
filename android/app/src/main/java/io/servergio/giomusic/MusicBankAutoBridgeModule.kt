@@ -12,6 +12,7 @@ import androidx.media3.session.SessionToken
 import com.facebook.react.bridge.*
 import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONArray
+import java.io.File
 
 /** Every command and state read uses the same session as Android Auto. */
 class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
@@ -83,7 +84,7 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
           .setTitle(item.getString("title"))
           .setArtist(item.optString("artist", ""))
           .setAlbumTitle(item.optString("album", ""))
-          .setArtworkUri(item.optString("coverUrl").takeIf { it.isNotBlank() }?.let(android.net.Uri::parse))
+          .setArtworkUri(AutoArtwork.localUri(item.optString("coverUrl")))
           .setIsPlayable(true).setIsBrowsable(false).build()).build()
     }
     player.setMediaItems(items, index, 0L)
@@ -115,7 +116,7 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
           .setUri(value.getString("uri"))
           .setMediaMetadata(MediaMetadata.Builder().setTitle(value.getString("title"))
             .setArtist(value.optString("artist", "")).setAlbumTitle(value.optString("album", ""))
-            .setArtworkUri(value.optString("coverUrl").takeIf { it.isNotBlank() }?.let(android.net.Uri::parse))
+            .setArtworkUri(AutoArtwork.localUri(value.optString("coverUrl")))
             .setIsPlayable(true).setIsBrowsable(false).build()).build()
         if (operation == "next") player.addMediaItem((player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount), item)
         else player.addMediaItem(item)
@@ -130,6 +131,8 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
   fun refreshCatalog(promise: Promise) {
     handler.post {
       try {
+        // Logout deletes the catalogue, even while the Auto service is not running.
+        if (!File(context.filesDir, MusicBankAutoService.CATALOGUE_FILE).exists()) AutoArtwork.clear(context)
         MusicBankAutoService.refreshCatalogue()
         promise.resolve(true)
       } catch (error: Exception) { promise.reject("ANDROID_AUTO_CATALOG", error) }

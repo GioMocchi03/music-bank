@@ -75,6 +75,7 @@ class MusicBankAutoService : MediaLibraryService() {
       return
     }
     attemptedStamp = stamp
+    if (stamp == -1L) AutoArtwork.clear(this)
     val next = AutoCatalogue().apply { load(file) }
     mainHandler.post {
       if (destroyed) return@post
@@ -128,6 +129,8 @@ class MusicBankAutoService : MediaLibraryService() {
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
     // Consente ai browser multimediali esterni, incluso Android Auto,
     // di collegarsi alla sessione. Media3 gestisce i comandi della sessione.
+    // I metadati visibili ai controller non contengono credenziali: l'artwork passa da
+    // AutoArtworkProvider e Media3 non invia l'URI di stream ai processi esterni.
     return librarySession
   }
 
@@ -288,6 +291,7 @@ class MusicBankAutoService : MediaLibraryService() {
     private var itemsById = emptyMap<String, MediaItem>()
     private var childrenById = emptyMap<String, List<MediaItem>>()
     private var searchIndex = emptyList<Pair<MediaItem, List<String>>>()
+    private val artworkUris = HashMap<String, Uri?>()
     private val searchCache = object : LinkedHashMap<String, List<MediaItem>>(16, 0.75f, true) {
       override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MediaItem>>): Boolean = size > 16
     }
@@ -449,6 +453,7 @@ class MusicBankAutoService : MediaLibraryService() {
     }
 
     private fun rebuildIndex() {
+      artworkUris.clear()
       val itemIndex = linkedMapOf<String, MediaItem>()
       val childIndex = linkedMapOf<String, List<MediaItem>>()
 
@@ -664,7 +669,7 @@ class MusicBankAutoService : MediaLibraryService() {
         .setTrackNumber(song.track.takeIf { it > 0 })
         .setDiscNumber(song.discNumber.takeIf { it > 0 })
         .setDurationMs(song.durationSeconds.takeIf { it > 0 }?.times(1000))
-        .setArtworkUri(song.artworkUrl?.let(Uri::parse))
+        .setArtworkUri(artworkUri(song.artworkUrl))
         .setIsBrowsable(false)
         .setIsPlayable(true)
         .build()
@@ -690,13 +695,17 @@ class MusicBankAutoService : MediaLibraryService() {
         .setMediaMetadata(
           MediaMetadata.Builder()
             .setTitle(title)
-            .setArtworkUri(artworkUrl?.let(Uri::parse))
+            .setArtworkUri(artworkUri(artworkUrl))
             .setIsBrowsable(true)
             .setIsPlayable(false)
             .build(),
         )
         .build()
     }
+
+    /** Songs of an album share one authenticated URL: map it to a content URI once per rebuild. */
+    private fun artworkUri(url: String?): Uri? =
+      if (url == null) null else artworkUris.getOrPut(url) { AutoArtwork.localUri(url) }
 
     private fun JSONObject.cleanString(key: String): String? {
       return optString(key).trim().takeIf { it.isNotBlank() && it != "null" }
@@ -740,7 +749,7 @@ class MusicBankAutoService : MediaLibraryService() {
   )
 
   companion object {
-    private const val CATALOGUE_FILE = "music-bank-auto-catalog.json"
+    internal const val CATALOGUE_FILE = "music-bank-auto-catalog.json"
     private const val ROOT_ID = "music-bank-root"
     private const val ALBUMS_ID = "music-bank-albums"
     private const val ARTISTS_ID = "music-bank-artists"
