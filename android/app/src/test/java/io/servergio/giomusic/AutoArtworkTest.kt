@@ -90,24 +90,23 @@ class AutoArtworkTest {
     assertThrows(SecurityException::class.java) { provider.openFile(error, "rw") }
   }
 
-  @Test fun usersAccountSwitchAndLogoutDoNotShareOrKeepArtwork() {
+  @Test fun usersDoNotShareArtworkAndLogoutForgetsIt() {
     val context = RuntimeEnvironment.getApplication()
     val alice = AutoArtwork.localUri(cover("al-user", "a1"))!!
     val bob = AutoArtwork.localUri(cover("al-user", "b1", user = "bob"))!!
     assertNotEquals(alice, bob)
-    // Unsigned artwork from another host is not an account switch.
-    AutoArtwork.localUri("https://radio.test/logo.png")
-    assertNotNull(AutoArtwork.remoteUrl(bob.lastPathSegment!!))
-    // Bob signing in drops Alice's signed URL: nothing is fetched with old credentials.
-    assertNull(AutoArtwork.remoteUrl(alice.lastPathSegment!!))
-    assertThrows(FileNotFoundException::class.java) { provider.openFile(alice, "r") }
+    // Offline downloads can mix accounts in one queue: every signed cover stays loadable.
+    assertNotNull(AutoArtwork.remoteUrl(alice.lastPathSegment!!))
+    assertArrayEquals(image, read(alice))
     assertArrayEquals(image, read(bob))
-    assertTrue(queries.single().contains("u=bob&"))
+    assertTrue(queries[0].contains("u=alice&") && queries[1].contains("u=bob&"))
 
     AutoArtwork.clear(context)
     assertFalse(AutoArtwork.cacheDir(context).exists())
+    assertNull(AutoArtwork.remoteUrl(alice.lastPathSegment!!))
     assertNull(AutoArtwork.remoteUrl(bob.lastPathSegment!!))
+    assertThrows(FileNotFoundException::class.java) { provider.openFile(alice, "r") }
     assertThrows(FileNotFoundException::class.java) { provider.openFile(bob, "r") }
-    assertEquals(1, hits.get())
+    assertEquals(2, hits.get())
   }
 }

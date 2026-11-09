@@ -27,7 +27,6 @@ internal object AutoArtwork {
   private val SECRET_PARAMS = setOf("p", "t", "s", "apikey")
   private val KEY = Regex("^[0-9a-f]{64}$")
   private val remoteByKey = ConcurrentHashMap<String, String>()
-  @Volatile private var account: String? = null
 
   /** Returns the controller-visible URI for [url]; http(s) URLs never leave the process. */
   fun localUri(url: String?): Uri? {
@@ -36,18 +35,7 @@ internal object AutoArtwork {
     val scheme = remote.scheme?.lowercase(Locale.ROOT)
     if (scheme != "http" && scheme != "https") return remote
     val key = keyFor(remote)
-    // Only signed Subsonic URLs identify the account; other hosts (radio logos) do not.
-    val owner = remote.getQueryParameter("u")?.let {
-      "${remote.scheme?.lowercase(Locale.ROOT)}://${remote.host?.lowercase(Locale.ROOT)}:${remote.port}#$it"
-    }
-    synchronized(this) {
-      // An account switch drops every URL signed with the previous credentials.
-      if (owner != null && owner != account) {
-        remoteByKey.clear()
-        account = owner
-      }
-      remoteByKey[key] = value
-    }
+    remoteByKey[key] = value
     return Uri.Builder().scheme(ContentResolver.SCHEME_CONTENT).authority(AUTHORITY).appendPath(key).build()
   }
 
@@ -55,10 +43,7 @@ internal object AutoArtwork {
 
   /** Logout removes the catalogue: forget the signed URLs and the cached images with it. */
   fun clear(context: Context) {
-    synchronized(this) {
-      remoteByKey.clear()
-      account = null
-    }
+    remoteByKey.clear()
     cacheDir(context).deleteRecursively()
   }
 
