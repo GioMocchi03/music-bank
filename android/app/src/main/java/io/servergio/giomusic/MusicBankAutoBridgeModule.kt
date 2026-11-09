@@ -83,7 +83,7 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
           .setTitle(item.getString("title"))
           .setArtist(item.optString("artist", ""))
           .setAlbumTitle(item.optString("album", ""))
-          .setArtworkUri(item.optString("coverUrl").takeIf { it.isNotBlank() }?.let(android.net.Uri::parse))
+          .setArtworkUri(AutoArtwork.localUri(item.optString("coverUrl")))
           .setIsPlayable(true).setIsBrowsable(false).build()).build()
     }
     player.setMediaItems(items, index, 0L)
@@ -115,7 +115,7 @@ class MusicBankAutoBridgeModule(private val context: ReactApplicationContext) :
           .setUri(value.getString("uri"))
           .setMediaMetadata(MediaMetadata.Builder().setTitle(value.getString("title"))
             .setArtist(value.optString("artist", "")).setAlbumTitle(value.optString("album", ""))
-            .setArtworkUri(value.optString("coverUrl").takeIf { it.isNotBlank() }?.let(android.net.Uri::parse))
+            .setArtworkUri(AutoArtwork.localUri(value.optString("coverUrl")))
             .setIsPlayable(true).setIsBrowsable(false).build()).build()
         if (operation == "next") player.addMediaItem((player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount), item)
         else player.addMediaItem(item)
