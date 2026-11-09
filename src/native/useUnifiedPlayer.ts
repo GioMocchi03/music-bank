@@ -5,6 +5,24 @@ import {
   type AndroidAutoPlaybackState,
 } from './androidAuto';
 
+function samePlaybackState(previous: AndroidAutoPlaybackState | null, next: AndroidAutoPlaybackState): boolean {
+  if (!previous) return false;
+  return previous.audioSessionId === next.audioSessionId
+    && previous.mediaId === next.mediaId
+    && previous.positionMs === next.positionMs
+    && previous.durationMs === next.durationMs
+    && previous.playing === next.playing
+    && previous.loaded === next.loaded
+    && previous.buffering === next.buffering
+    && previous.queueIndex === next.queueIndex
+    && previous.repeatMode === next.repeatMode
+    && previous.shuffle === next.shuffle
+    && previous.playbackRate === next.playbackRate
+    && previous.error === next.error
+    && previous.queueIds.length === next.queueIds.length
+    && previous.queueIds.every((id, index) => id === next.queueIds[index]);
+}
+
 /** iOS/web retain Expo; Android delegates every transport action to Media3. */
 export function useUnifiedPlayer(expoPlayer: AudioPlayer, expoStatus: AudioStatus) {
   const [state, setState] = useState<AndroidAutoPlaybackState | null>(null);
@@ -28,7 +46,8 @@ export function useUnifiedPlayer(expoPlayer: AudioPlayer, expoStatus: AudioStatu
       try {
         const sampledAt = Date.now();
         const next = { ...await getAndroidAutoPlaybackState(), sampledAt };
-        if (!disposed) { setState(next); setError(next.error); }
+        // An idle or paused player returns identical samples: skip the app-wide re-render.
+        if (!disposed && !samePlaybackState(stateRef.current, next)) { setState(next); setError(next.error); }
       } catch (reason) {
         if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
       } finally {

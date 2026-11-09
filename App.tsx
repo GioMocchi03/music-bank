@@ -10,6 +10,7 @@ import {
   useAudioPlayerStatus,
 } from 'expo-audio';
 import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import {
   createContext,
   cloneElement,
@@ -37,6 +38,8 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type ScrollViewInstance,
+  type ViewInstance,
 } from 'react-native';
 import {
   SafeAreaProvider,
@@ -53,6 +56,8 @@ import { chooseFeaturedAlbum, featuredArtistKey } from './src/utils/homeFeatured
 import { connectionSourceKey, downloadJobLabel, downloadKey, DownloadJob, DownloadQueue, formatDownloadSize, songBelongsToSource } from './src/utils/downloads';
 import { clearHistory, HistoryEntry, loadHistory, rememberPlayed } from './src/storage/historyStore';
 import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './src/storage/libraryStore';
+import { startupMark } from './src/utils/startupMetrics';
+import { emptyLibraryIndex, prepareLibraryIndex, type LibraryIndex } from './src/utils/libraryIndex';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
 import { configureWebEqualizer } from './src/player/webEqualizer';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
@@ -82,7 +87,7 @@ import {
 } from './src/subsonic/NavidromeClient';
 import {
   normalizeSearchText,
-  rankDirectSearchItems,
+  rankSearchItemsInSlices,
   rankSearchItems,
 } from './src/utils/search';
 import {
@@ -105,6 +110,7 @@ import {
 } from './src/utils/playlists';
 
 type Tab = 'home' | 'library' | 'search' | 'settings';
+const EMPTY_LIBRARY_INDEX = emptyLibraryIndex();
 type LibraryMode =
   | 'hub'
   | 'albums'
@@ -139,9 +145,6 @@ const OfflineContext = createContext<{
   onDownloadMany: (songs: Song[]) => void;
 }>({ tracks: new Map(), jobs: {}, sourceKey: 'legacy', onDownload: () => {}, onDownloadMany: () => {} });
 const AUTO_SYNC_FRESHNESS_MS = 6 * 60 * 60 * 1000;
-const demoAlbums: Album[] = [
-  { id: 'demo-1', name: 'Collega Navidrome', artist: 'La tua musica apparirà qui' },
-];
 const emptySearch: SearchResults = { albums: [], artists: [], songs: [] };
 
 function mergeSearchResults(local: SearchResults, remote: SearchResults): SearchResults {
@@ -216,7 +219,12 @@ function MusicBankApp() {
     password: '',
   });
   const [albums, setAlbums] = useState<Album[]>([]);
+  const [libraryPreviewReady, setLibraryPreviewReady] = useState(false);
   const [featuredAlbumId, setFeaturedAlbumId] = useState<string | null>(null);
+  const featuredAlbum = useMemo(
+    () => featuredAlbumId ? albums.find((album) => album.id === featuredAlbumId) : undefined,
+    [albums, featuredAlbumId],
+  );
   const [artists, setArtists] = useState<Artist[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -224,6 +232,7 @@ function MusicBankApp() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [radios, setRadios] = useState<InternetRadioStation[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyReady, setHistoryReady] = useState(false);
   const [offlineTracks, setOfflineTracks] = useState<OfflineTrack[]>([]);
   const [activeSourceKey, setActiveSourceKey] = useState('legacy');
   const [downloadJobs, setDownloadJobs] = useState<Record<string, DownloadJob>>({});
@@ -308,10 +317,35 @@ function MusicBankApp() {
   const expoStatus = useAudioPlayerStatus(expoPlayer);
   const { player, status: playerStatus, state: autoState, error: autoError, command: autoCommand } = useUnifiedPlayer(expoPlayer, expoStatus);
   useEffect(() => { if (autoError) setMessage(`Android Auto: ${autoError}`); }, [autoError]);
+  const autoStateRef = useRef(autoState);
+  autoStateRef.current = autoState;
+  const autoQueueKey = autoState
+    ? [autoState.queueIds.join('\0'), autoState.queueIndex, autoState.shuffle, autoState.repeatMode].join('\u0001')
+    : '';
+  const [preparedLibrary, setPreparedLibrary] = useState<{
+    albums: Album[]; artists: Artist[]; songs: Song[]; index: LibraryIndex;
+  } | null>(null);
+  const libraryIndexReady = preparedLibrary?.albums === albums
+    && preparedLibrary?.artists === artists && preparedLibrary?.songs === songs;
+  const libraryIndex = libraryIndexReady ? preparedLibrary.index : EMPTY_LIBRARY_INDEX;
   useEffect(() => {
+    const controller = new AbortController();
+    void prepareLibraryIndex(albums, artists, songs, controller.signal).then((index) => {
+      if (!index || controller.signal.aborted) return;
+      setPreparedLibrary({ albums, artists, songs, index });
+      startupMark('library-index-ready');
+    });
+    return () => controller.abort();
+  }, [albums, artists, songs]);
+  const songsById = libraryIndex.songsById;
+  // Position updates arrive every poll while playing; only queue changes need this work.
+  useEffect(() => {
+    const autoState = autoStateRef.current;
     if (!autoState || disconnectingRef.current || autoState.sampledAt <= nativeLoadFinishedRef.current) return;
-    const known = new Map([...songs, ...nativeKnownSongsRef.current.values(), ...queueRef.current].map((song) => [song.id, song]));
-    const nativeQueue = autoState.queueIds.map((id) => known.get(id));
+    const queued = new Map(queueRef.current.map((song) => [song.id, song]));
+    const nativeQueue = autoState.queueIds.map((id) => (
+      queued.get(id) ?? nativeKnownSongsRef.current.get(id) ?? songsById.get(id)
+    ));
     // Never silently shorten a queue whose library has not finished loading.
     if (nativeQueue.some((song) => !song)) return;
     if (queueRef.current.map((song) => song.id).join('\0') !== autoState.queueIds.join('\0')) {
@@ -320,7 +354,7 @@ function MusicBankApp() {
     setQueueIndex(autoState.queueIds.length ? autoState.queueIndex : -1);
     setShuffle(autoState.shuffle);
     setRepeat(autoState.repeatMode === 1 ? 'one' : autoState.repeatMode === 2 ? 'all' : 'none');
-  }, [autoState, songs]);
+  }, [autoQueueKey, songsById]);
   const audioSessionId = autoState?.audioSessionId ?? 0;
   const currentSong = queueIndex >= 0 ? queue[queueIndex] : undefined;
   const actionTarget = actionSong ?? currentSong;
@@ -382,6 +416,7 @@ function MusicBankApp() {
 
   useEffect(() => {
     let active = true;
+    startupMark('bootstrap-start');
     const connectionPromise = loadConnection();
     const previewPromise = loadLibraryPreview();
     const historyPromise = loadHistory();
@@ -395,6 +430,8 @@ function MusicBankApp() {
       if (active) setHistory(savedHistory);
     }).catch(() => {
       // La Home resta utilizzabile anche senza cronologia locale.
+    }).finally(() => {
+      if (active) setHistoryReady(true);
     });
     void offlinePromise.then((savedOffline) => {
       if (active) {
@@ -453,17 +490,22 @@ function MusicBankApp() {
         setMessage(
           `${preview.albums.length} album dalla cache · caricamento tracce in background…`,
         );
+        startupMark('preview-visible');
       }
+      setLibraryPreviewReady(true);
       // Seconda fase non bloccante: completa ricerca, tracce e Android Auto.
       await loadLibrary().then(async (snapshot) => {
         if (!active || !snapshot || !saved) return;
         if (snapshot.syncedAt < lastFullSyncAtRef.current) return;
         setSongs(snapshot.songs);
-        if (saved) {
-          await ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot).catch(() => {
+        startupMark('library-loaded');
+        // Una sync di avvio imminente rigenera già il catalogo: evitiamo il doppio lavoro.
+        if (Date.now() - snapshot.syncedAt >= AUTO_SYNC_FRESHNESS_MS) return;
+        void ensureAndroidAutoCatalog(snapshot.songs, new NavidromeClient(saved), snapshot)
+          .then(() => startupMark('android-auto-catalog-ready'))
+          .catch(() => {
             // Il catalogo Auto verrà rigenerato alla prossima sincronizzazione completa.
           });
-        }
       }).catch(() => {
         // Album, artisti e generi della preview restano immediatamente disponibili.
       });
@@ -473,7 +515,11 @@ function MusicBankApp() {
         setMessage(error instanceof Error ? error.message : 'Errore durante il ripristino locale');
       }
     }).finally(() => {
-      if (active) setBootstrapReady(true);
+      if (active) {
+        setLibraryPreviewReady(true);
+        setBootstrapReady(true);
+        startupMark('first-screen-ready');
+      }
     });
     return () => {
       active = false;
@@ -717,10 +763,10 @@ function MusicBankApp() {
           syncedAt: Date.now(),
         };
         setMessage('Salvataggio verificato della libreria…');
-        await saveLibrary(snapshot, (savedSongs, totalSongs) => {
+        // saveLibrary rilegge e verifica la generazione salvata prima di attivarla.
+        const restoredSnapshot = await saveLibrary(snapshot, (savedSongs, totalSongs) => {
           setMessage(`Salvataggio sul dispositivo · ${savedSongs}/${totalSongs} brani…`);
         });
-        const restoredSnapshot = await loadLibrary();
         if (
           !restoredSnapshot ||
           restoredSnapshot.albums.length !== allAlbums.length ||
@@ -816,10 +862,9 @@ function MusicBankApp() {
   }, [bootstrapReady, verifyConnection]);
 
   useEffect(() => {
-    if (!bootstrapReady || !preferencesReady || !albums.length) return;
-    if (featuredAlbumId && albums.some((album) => album.id === featuredAlbumId)) return;
+    if (!libraryPreviewReady || !historyReady || !preferencesReady || !albums.length || featuredAlbum) return;
     const selected = chooseFeaturedAlbum(
-      albums, songs, history, preferences.lastFeaturedArtist, preferences.lastFeaturedAlbumId,
+      albums, [], history, preferences.lastFeaturedArtist, preferences.lastFeaturedAlbumId,
     );
     if (!selected) return;
     setFeaturedAlbumId(selected.id);
@@ -828,7 +873,7 @@ function MusicBankApp() {
       lastFeaturedArtist: featuredArtistKey(selected),
       lastFeaturedAlbumId: selected.id,
     }));
-  }, [albums, bootstrapReady, featuredAlbumId, history, preferences.lastFeaturedAlbumId, preferences.lastFeaturedArtist, preferencesReady, songs]);
+  }, [albums, featuredAlbum, history, historyReady, libraryPreviewReady, preferences.lastFeaturedAlbumId, preferences.lastFeaturedArtist, preferencesReady]);
 
   const loadSong = useCallback(
     async (songs: Song[], index: number, autoPlay = true) => {
@@ -974,86 +1019,76 @@ function MusicBankApp() {
     return () => subscription.remove();
   }, [playNext, player]);
 
-  const searchCatalog = useMemo(() => ({
-      albums: albums.map((album) => ({
-        item: album,
-        text: normalizeSearchText(`${album.name} ${album.artist} ${album.genre ?? ''}`),
-      })),
-      artists: artists.map((artist) => ({
-        item: artist,
-        text: normalizeSearchText(artist.name),
-      })),
-      songs: songs.map((song) => ({
-        item: song,
-        text: normalizeSearchText(`${song.title} ${song.artist ?? ''} ${song.album ?? ''} ${song.genre ?? ''}`),
-      })),
-    }), [albums, artists, songs]);
+  const searchCatalog = libraryIndex.search;
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (!trimmed) {
+    if (tab !== 'search' || !trimmed) {
       setSearchResults(emptySearch);
       setSearching(false);
       return;
     }
     let cancelled = false;
     const abortController = new AbortController();
-    let localResults: SearchResults = {
-      albums: searchFilter === 'all' || searchFilter === 'albums'
-        ? rankDirectSearchItems(searchCatalog.albums, trimmed, 60)
-        : [],
-      artists: searchFilter === 'all' || searchFilter === 'artists'
-        ? rankDirectSearchItems(searchCatalog.artists, trimmed, 30)
-        : [],
-      songs: searchFilter === 'all' || searchFilter === 'songs'
-        ? rankDirectSearchItems(searchCatalog.songs, trimmed, 100)
-        : [],
-    };
-    setSearchResults(localResults);
-
-    const needsFuzzySearch = !localResults.albums.length
-      && !localResults.artists.length
-      && !localResults.songs.length;
-    const fuzzyTimer = needsFuzzySearch ? setTimeout(() => {
+    let localResults = emptySearch;
+    let remoteResults: SearchResults | null = null;
+    let localPending = true;
+    let remotePending = !!(clientRef.current && connected);
+    const publishResults = () => {
       if (cancelled) return;
-      localResults = {
+      setSearchResults(remoteResults ? mergeSearchResults(localResults, remoteResults) : localResults);
+      setSearching(localPending || remotePending);
+    };
+    const rankLocal = async (fuzzy = false): Promise<SearchResults> => ({
         albums: searchFilter === 'all' || searchFilter === 'albums'
-          ? rankSearchItems(searchCatalog.albums, trimmed, 60)
+          ? await rankSearchItemsInSlices(searchCatalog.albums, trimmed, 60, abortController.signal, fuzzy) ?? []
           : [],
         artists: searchFilter === 'all' || searchFilter === 'artists'
-          ? rankSearchItems(searchCatalog.artists, trimmed, 30)
+          ? await rankSearchItemsInSlices(searchCatalog.artists, trimmed, 30, abortController.signal, fuzzy) ?? []
           : [],
         songs: searchFilter === 'all' || searchFilter === 'songs'
-          ? rankSearchItems(searchCatalog.songs, trimmed, 100)
+          ? await rankSearchItemsInSlices(searchCatalog.songs, trimmed, 100, abortController.signal, fuzzy) ?? []
           : [],
-      };
-      setSearchResults(localResults);
-    }, 90) : undefined;
+    });
+    publishResults();
+    const localTimer = setTimeout(() => {
+      void (async () => {
+        localResults = await rankLocal();
+        if (cancelled) return;
+        publishResults();
+        if (!localResults.albums.length && !localResults.artists.length && !localResults.songs.length) {
+          localResults = await rankLocal(true);
+        }
+        localPending = false;
+        publishResults();
+      })();
+    }, 80);
 
     const timer = setTimeout(() => {
       const client = clientRef.current;
       if (!client || !connected) {
         return;
       }
-      setSearching(true);
       void client.search(trimmed, abortController.signal).then(
-        (remoteResults) => {
-          if (!cancelled) setSearchResults(mergeSearchResults(localResults, remoteResults));
+        (results) => {
+          remoteResults = results;
+          publishResults();
         },
         () => {
           // I risultati locali restano visibili anche durante un calo di rete.
         },
       ).finally(() => {
-        if (!cancelled) setSearching(false);
+        remotePending = false;
+        publishResults();
       });
     }, 220);
     return () => {
       cancelled = true;
       abortController.abort();
       clearTimeout(timer);
-      if (fuzzyTimer) clearTimeout(fuzzyTimer);
+      clearTimeout(localTimer);
     };
-  }, [connected, query, searchCatalog, searchFilter]);
+  }, [connected, query, searchCatalog, searchFilter, tab]);
 
   useEffect(() => {
     if (!detail) return;
@@ -1224,7 +1259,6 @@ function MusicBankApp() {
     if (operation) setDownloadJobs((current) => ({ ...current, [key]: { song: scopedSong, status: 'queued' } }));
   }
 
-  const currentAlbums = albums.length ? albums : demoAlbums;
   const connectionConfigured = Boolean(
     connection.serverUrl.trim() && connection.username.trim(),
   );
@@ -1373,8 +1407,11 @@ function MusicBankApp() {
             >
               {tab === 'home' && (
                 <HomeScreen
-                  albums={currentAlbums}
-                  featured={albums.find((album) => album.id === featuredAlbumId) ?? currentAlbums[0]}
+                  albums={albums}
+                  featured={featuredAlbum}
+                  loading={!libraryPreviewReady || !historyReady || !preferencesReady
+                    || (albums.length > 0 && !featuredAlbum)
+                    || (connectionConfigured && !albums.length && (!bootstrapReady || busy))}
                   artists={artists}
                   genres={genres}
                   history={history}
@@ -1402,6 +1439,8 @@ function MusicBankApp() {
               {tab === 'library' && (
                 <LibraryScreen
                   mode={libraryMode}
+                  index={libraryIndex}
+                  indexReady={libraryIndexReady}
                   onMode={setLibraryMode}
                   albums={albums}
                   artists={artists}
@@ -1436,7 +1475,7 @@ function MusicBankApp() {
                   filter={searchFilter}
                   onFilter={setSearchFilter}
                   results={searchResults}
-                  searching={searching}
+                  searching={searching || (!!query.trim() && !libraryIndexReady)}
                   columns={columns}
                   onAlbum={(album) => setDetail({ type: 'album', id: album.id })}
                   onPlayAlbum={(album) => void playAlbum(album)}
@@ -1535,8 +1574,8 @@ function MusicBankApp() {
         sessionId={audioSessionId}
         visible={eqOpen}
         onClose={() => setEqOpen(false)}
-          player={player}
-          trackKey={`${currentSong?.id ?? ''}:${playerStatus.isLoaded ? 'ready' : 'loading'}`}
+        player={player}
+        trackKey={`${currentSong?.id ?? ''}:${playerStatus.isLoaded ? 'ready' : 'loading'}`}
       />
       <MoreActionsModal
         visible={actionsOpen}
@@ -1910,6 +1949,7 @@ function NavItem({
 function HomeScreen({
   albums,
   featured,
+  loading,
   artists,
   genres,
   history,
@@ -1925,7 +1965,8 @@ function HomeScreen({
   onConnect,
 }: {
   albums: Album[];
-  featured: Album;
+  featured?: Album;
+  loading: boolean;
   artists: Artist[];
   genres: Genre[];
   history: HistoryEntry[];
@@ -1960,24 +2001,30 @@ function HomeScreen({
         .map((artist) => [artist.id, artist]),
     ).values()].slice(0, 8);
   }, [artists, history]);
-  const hasLibrary = albums.length > 0 && featured.id !== 'demo-1';
+  const hasLibrary = albums.length > 0;
+  const heroTitle = loading ? 'La tua libreria'
+    : featured?.name ?? (configured ? 'Nessun album sincronizzato' : 'Collega Navidrome');
+  const heroArtist = loading ? 'Preparazione del tuo suggerimento…'
+    : featured?.artist ?? (configured ? 'Sincronizza il server per trovare la tua musica' : 'La tua musica apparirà qui');
   return (
     <>
       <LinearGradient colors={['#3B2477', '#172047', '#111520']} style={[styles.hero, mobile && styles.heroMobile]}>
         <View style={styles.heroGlow} />
         <View style={[styles.heroCopy, mobile && styles.heroCopyMobile]}>
-          <Text style={styles.eyebrow}>{connected ? 'SCELTO DALLA TUA LIBRERIA' : hasLibrary ? 'LIBRERIA LOCALE' : 'BENVENUTO'}</Text>
-          <Text numberOfLines={2} style={[styles.heroTitle, mobile && styles.heroTitleMobile]}>{featured.name}</Text>
-          <Text numberOfLines={1} style={[styles.heroArtist, mobile && styles.heroArtistMobile]}>{featured.artist}</Text>
-          <View style={[styles.heroActions, mobile && styles.heroActionsMobile]}>
-            <Pressable style={styles.primaryButton} onPress={() => hasLibrary ? onPlayAlbum(featured) : onConnect()}>
-              <MaterialCommunityIcons name={hasLibrary ? 'play' : 'server-network'} size={20} color="#10130B" />
-              <Text numberOfLines={1} style={styles.primaryButtonText}>{hasLibrary ? 'Riproduci' : configured ? 'Riprova server' : 'Collega server'}</Text>
-            </Pressable>
-            {connected && <IconButton icon="shuffle-variant" onPress={onRandom} light />}
-          </View>
+          <Text style={styles.eyebrow}>{loading ? 'LA TUA MUSICA' : connected && hasLibrary ? 'SCELTO DALLA TUA LIBRERIA' : hasLibrary ? 'LIBRERIA LOCALE' : 'BENVENUTO'}</Text>
+          <Text numberOfLines={2} style={[styles.heroTitle, mobile && styles.heroTitleMobile]}>{heroTitle}</Text>
+          <Text numberOfLines={1} style={[styles.heroArtist, mobile && styles.heroArtistMobile]}>{heroArtist}</Text>
+          {loading ? <ActivityIndicator color={lime} /> : (
+            <View style={[styles.heroActions, mobile && styles.heroActionsMobile]}>
+              <Pressable style={styles.primaryButton} onPress={() => featured ? onPlayAlbum(featured) : onConnect()}>
+                <MaterialCommunityIcons name={hasLibrary ? 'play' : 'server-network'} size={20} color="#10130B" />
+                <Text numberOfLines={1} style={styles.primaryButtonText}>{hasLibrary ? 'Riproduci' : configured ? 'Riprova server' : 'Collega server'}</Text>
+              </Pressable>
+              {connected && <IconButton icon="shuffle-variant" onPress={onRandom} light />}
+            </View>
+          )}
         </View>
-        {featured.coverUrl && (
+        {!loading && featured?.coverUrl && (
           <Image source={{ uri: featured.coverUrl }} style={[styles.heroCover, mobile && styles.heroCoverMobile]} />
         )}
       </LinearGradient>
@@ -2022,6 +2069,8 @@ function HomeScreen({
 
 function LibraryScreen({
   mode,
+  index,
+  indexReady,
   onMode,
   albums,
   artists,
@@ -2044,6 +2093,8 @@ function LibraryScreen({
   onMoreSong,
 }: {
   mode: LibraryMode;
+  index: LibraryIndex;
+  indexReady: boolean;
   onMode: (mode: LibraryMode) => void;
   albums: Album[];
   artists: Artist[];
@@ -2066,24 +2117,7 @@ function LibraryScreen({
   onMoreSong: (song: Song) => void;
 }) {
   const [genreQuery, setGenreQuery] = useState('');
-  const favoriteSongs = useMemo(
-    () => songs.filter((song) => !!song.starred),
-    [songs],
-  );
-  const years = useMemo(
-    () => Array.from(new Set(albums
-      .map((album) => album.year)
-      .filter((year): year is number => typeof year === 'number')))
-      .sort((a, b) => Number(b) - Number(a)),
-    [albums],
-  );
-  const yearCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    albums.forEach((album) => {
-      if (album.year) counts.set(album.year, (counts.get(album.year) ?? 0) + 1);
-    });
-    return counts;
-  }, [albums]);
+  const { favoriteSongs, years, yearCounts } = index;
   const filteredGenres = useMemo(() => {
     if (!genreQuery.trim()) return genres;
     const entries = genres.map((genre) => ({
@@ -2093,18 +2127,18 @@ function LibraryScreen({
     return rankSearchItems(entries, genreQuery, genres.length);
   }, [genreQuery, genres]);
   const playlistGroups = useMemo(
-    () => partitionPlaylists(playlists, username, personalPlaylistIds),
-    [personalPlaylistIds, playlists, username],
+    () => mode === 'playlists' ? partitionPlaylists(playlists, username, personalPlaylistIds) : { owned: [], server: [] },
+    [mode, personalPlaylistIds, playlists, username],
   );
   const tiles: Array<[LibraryMode, IconName, string, string]> = [
     ['albums', 'album', 'Album', `${albums.length}`],
     ['artists', 'account-music', 'Artisti album', `${artists.length}`],
     ['genres', 'tag-outline', 'Generi musicali', `${genres.length}`],
     ['tracks', 'music-note', 'Tracce', `${songs.length}`],
-    ['favorites', 'heart', 'Preferiti', `${favoriteSongs.length}`],
+    ['favorites', 'heart', 'Preferiti', indexReady ? `${favoriteSongs.length}` : '…'],
     ['playlists', 'playlist-music', 'Playlist', `${playlists.length}`],
     ['radio', 'radio', 'Radio Internet', `${radios.length}`],
-    ['years', 'calendar-range', 'Anni', `${years.length}`],
+    ['years', 'calendar-range', 'Anni', indexReady ? `${years.length}` : '…'],
     ['offline', 'download-circle', 'Offline', `${offlineTracks.length}`],
   ];
   return (
@@ -2176,7 +2210,7 @@ function LibraryScreen({
         />
       )}
       {mode === 'favorites' && (
-        favoriteSongs.length
+        !indexReady ? <LoadingState text="Preparazione preferiti…" /> : favoriteSongs.length
           ? <CollectionPager
               items={favoriteSongs}
               pageSize={100}
@@ -2188,7 +2222,8 @@ function LibraryScreen({
       {mode === 'offline' && (
         <OfflineDownloads onSong={onSong} onMoreSong={onMoreSong} />
       )}
-      {mode === 'years' && (
+      {mode === 'years' && !indexReady && <LoadingState text="Preparazione anni…" />}
+      {mode === 'years' && indexReady && (
         <View style={styles.libraryHub}>
           {years.map((year) => (
             <Pressable key={year} style={styles.libraryTile} onPress={() => {
@@ -2898,6 +2933,7 @@ function SettingsScreen({
 
 function UpdateSettings() {
   const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState('');
   const [release, setRelease] = useState<GithubRelease | null>(null);
 
@@ -2928,6 +2964,30 @@ function UpdateSettings() {
     return () => { active = false; };
   }, [check]);
 
+  const applyOverTheAirUpdate = useCallback(async () => {
+    if (!Updates.isEnabled) {
+      setStatus('Aggiornamenti automatici non disponibili in questa build.');
+      return;
+    }
+    setApplying(true);
+    setStatus('Controllo aggiornamento dell’app…');
+    try {
+      const result = await Updates.checkForUpdateAsync();
+      if (!result.isAvailable) {
+        setStatus('L’app è già aggiornata.');
+        return;
+      }
+      setStatus('Scaricamento aggiornamento…');
+      await Updates.fetchUpdateAsync();
+      setStatus('Aggiornamento scaricato. Riavvio dell’app…');
+      await Updates.reloadAsync();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Aggiornamento non riuscito.');
+    } finally {
+      setApplying(false);
+    }
+  }, []);
+
   return (
     <View style={styles.settingsActionGroup}>
       <SettingsActionRow icon="cellphone-check" title="Versione installata" subtitle={`Music Bank ${APP_VERSION} · build ${APP_BUILD}`} value="Installata" onPress={() => {}} />
@@ -2937,6 +2997,10 @@ function UpdateSettings() {
         <Pressable disabled={checking} style={[styles.syncButton, checking && styles.buttonDisabled]} onPress={() => void check()}>
           {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
           <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Controlla aggiornamenti'}</Text>
+        </Pressable>
+        <Pressable disabled={checking || applying} style={[styles.syncButton, (checking || applying) && styles.buttonDisabled]} onPress={() => void applyOverTheAirUpdate()}>
+          {applying ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="download-circle" size={21} color="#10130B" />}
+          <Text style={styles.syncButtonText}>{applying ? 'Aggiornamento…' : 'Scarica aggiornamento app'}</Text>
         </Pressable>
         {!!status && <Text style={styles.statusText}>{status}</Text>}
       </View>
@@ -3309,7 +3373,7 @@ function FullPlayer({ visible, song, status, shuffle, repeat, bottomInset, showA
 function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; value: number; duration: number; onSeek: (seconds: number) => void }) {
   const [width, setWidth] = useState(0);
   const widthRef = useRef(0);
-  const hostRef = useRef<View>(null);
+  const hostRef = useRef<ViewInstance>(null);
   const durationRef = useRef(duration);
   const onSeekRef = useRef(onSeek);
   durationRef.current = duration;
@@ -3376,8 +3440,48 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
 }
 
 function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
-  const listRef = useRef<ScrollView>(null);
+  const listRef = useRef<ScrollViewInstance>(null);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
+  const [visualQueue, setVisualQueue] = useState(queue);
+  const dragOriginRef = useRef<number | null>(null);
+  const dragVisualIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (dragTarget === null) setVisualQueue(queue);
+  }, [queue, dragTarget]);
+  const handleDragTarget = useCallback((from: number, target: number | null) => {
+    if (target === null) {
+      dragOriginRef.current = null;
+      dragVisualIndexRef.current = null;
+      setDragTarget(null);
+      return;
+    }
+    if (dragOriginRef.current === null) {
+      dragOriginRef.current = from;
+      dragVisualIndexRef.current = from;
+    }
+    const current = dragVisualIndexRef.current ?? from;
+    if (current !== target) {
+      setVisualQueue((items) => {
+        const next = items.slice();
+        const [moved] = next.splice(current, 1);
+        next.splice(target, 0, moved);
+        return next;
+      });
+      dragVisualIndexRef.current = target;
+    }
+    if (target <= 1) {
+      listRef.current?.scrollTo({ y: Math.max(0, (target - 1) * 58), animated: true });
+    } else if (target >= queue.length - 2) {
+      listRef.current?.scrollToEnd({ animated: true });
+    }
+    setDragTarget(target);
+  }, [queue.length]);
+  const handleReorder = useCallback((from: number, to: number) => {
+    dragOriginRef.current = null;
+    dragVisualIndexRef.current = null;
+    setDragTarget(null);
+    if (from !== to) onReorder(from, to);
+  }, [onReorder]);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
@@ -3401,17 +3505,17 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
           style={styles.queueList}
           scrollEnabled={dragTarget === null}
         >
-          {queue.map((song, index) => (
+          {visualQueue.map((song, index) => (
             <QueueRow
-              key={`${song.id}-${index}`}
+              key={song.id}
               song={song}
               index={index}
               count={queue.length}
               current={index === currentIndex}
               target={index === dragTarget}
               onPick={onPick}
-              onDragTarget={setDragTarget}
-              onReorder={onReorder}
+              onDragTarget={handleDragTarget}
+              onReorder={handleReorder}
               onRemove={onRemove}
             />
           ))}
@@ -3421,7 +3525,7 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
   );
 }
 
-function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (index: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
+function QueueRow({ song, index, count, current, target, onPick, onDragTarget, onReorder, onRemove }: { song: Song; index: number; count: number; current: boolean; target: boolean; onPick: (index: number) => void; onDragTarget: (from: number, target: number | null) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void }) {
   const targetRef = useRef(index);
   const handlers = useRef({ index, count, onDragTarget, onReorder });
   handlers.current = { index, count, onDragTarget, onReorder };
@@ -3432,21 +3536,21 @@ function QueueRow({ song, index, count, current, target, onPick, onDragTarget, o
     onPanResponderGrant: () => {
       origin.current = { index: handlers.current.index, count: handlers.current.count };
       targetRef.current = origin.current.index;
-      handlers.current.onDragTarget(origin.current.index);
+      handlers.current.onDragTarget(origin.current.index, origin.current.index);
     },
     onPanResponderMove: (_, gesture) => {
       const targetIndex = queueDropIndex(origin.current.index, origin.current.count, gesture.dy);
       if (targetRef.current !== targetIndex) {
         targetRef.current = targetIndex;
-        handlers.current.onDragTarget(targetIndex);
+        handlers.current.onDragTarget(origin.current.index, targetIndex);
       }
     },
     onPanResponderRelease: () => {
       const targetIndex = targetRef.current;
-      handlers.current.onDragTarget(null);
+      handlers.current.onDragTarget(origin.current.index, null);
       if (targetIndex !== origin.current.index) handlers.current.onReorder(origin.current.index, targetIndex);
     },
-    onPanResponderTerminate: () => handlers.current.onDragTarget(null),
+    onPanResponderTerminate: () => handlers.current.onDragTarget(origin.current.index, null),
     onPanResponderTerminationRequest: () => false,
   }), []);
   return (
@@ -4163,7 +4267,7 @@ const styles = StyleSheet.create({
   eqBands: { minHeight: 245, marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', gap: 8 },
   swipeHost: { position: 'relative', overflow: 'hidden', borderRadius: 13 },
   queueDragHandle: { width: 34, height: 46, alignItems: 'center', justifyContent: 'center' },
-  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime },
+  queueRowTarget: { backgroundColor: '#302E24', borderWidth: 1, borderColor: lime, elevation: 8, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
   queueClearText: { color: '#FF9A9A', fontSize: 11, fontWeight: '900' },
   queueClearButton: { minHeight: 40, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#25191D', borderWidth: 1, borderColor: '#4A272F' },
   queueHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },

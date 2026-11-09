@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
+import { yieldToEvents } from '../utils/backgroundWork';
 
 import {
   cleanGenres,
@@ -156,17 +157,25 @@ async function readGeneration(
   manifest: LibraryManifest,
 ): Promise<LibrarySnapshot> {
   const metadata = await readGenerationMetadata(root, manifest);
+  const { songCount: _songCount, ...libraryMetadata } = metadata;
   const generation = new Directory(root, manifest.generation);
   const songs: Song[] = [];
+  const albumCovers = new Map(metadata.albums.map((album) => [album.id, album.coverUrl]));
   for (let index = 0; index < manifest.songChunks; index += 1) {
+    await yieldToEvents();
     const chunkFile = new File(generation, `songs-${index}.json`);
     if (!chunkFile.exists) throw new Error(`Blocco tracce ${index + 1} assente.`);
     const chunk = JSON.parse(await chunkFile.text()) as Song[];
     if (!Array.isArray(chunk)) throw new Error(`Blocco tracce ${index + 1} non valido.`);
-    songs.push(...chunk);
+    for (const song of chunk) {
+      songs.push({
+        ...song,
+        coverUrl: song.albumId ? albumCovers.get(song.albumId) ?? song.coverUrl : song.coverUrl,
+      });
+    }
   }
 
-  const snapshot = normalizeLibrary({ ...metadata, songs });
+  const snapshot = { ...libraryMetadata, songs };
   if (snapshot.songs.length !== manifest.songs) {
     throw new Error('Verifica della libreria salvata non riuscita.');
   }
@@ -231,16 +240,14 @@ async function loadChunkedLibraryPreview(): Promise<LibraryPreview | null> {
 export async function saveLibrary(
   snapshot: LibrarySnapshot,
   onProgress?: (savedSongs: number, totalSongs: number) => void,
-): Promise<void> {
+): Promise<LibrarySnapshot> {
   if (Platform.OS === 'web') {
-    await saveWebLibrary(JSON.stringify({
-      ...snapshot,
-      songs: snapshot.songs.map(stripSongCover),
-    }));
+    const stored = { ...snapshot, songs: snapshot.songs.map(stripSongCover) };
+    await saveWebLibrary(JSON.stringify(stored));
     try {
-      await AsyncStorage.multiRemove([WEB_KEY, LEGACY_KEY]);
+      await AsyncStorage.removeMany([WEB_KEY, LEGACY_KEY]);
     } catch {}
-    return;
+    return normalizeLibrary(stored);
   }
 
   const root = new Directory(Paths.document, ROOT_DIRECTORY);
@@ -294,8 +301,8 @@ export async function saveLibrary(
       onProgress?.(Math.min(start + chunk.length, snapshot.songs.length), snapshot.songs.length);
     }
 
-    // Rilegge l'intera generazione prima di renderla attiva.
-    await readGeneration(root, manifest);
+    // Rilegge l'intera generazione prima di renderla attiva: e la copia restituita all'app.
+    const verified = await readGeneration(root, manifest);
 
     const manifestTemporary = new File(root, `${MANIFEST_FILE}.tmp`);
     manifestTemporary.create({ overwrite: true });
@@ -303,8 +310,9 @@ export async function saveLibrary(
     await manifestTemporary.move(manifestDestination, { overwrite: true });
     manifestCommitted = true;
 
-    const verified = await loadChunkedLibrary();
-    if (!verified || verified.syncedAt !== snapshot.syncedAt) {
+    // I blocchi sono gia stati riletti: basta confermare che la manifest attiva punti a loro.
+    const active = await readActiveManifest();
+    if (!active || active.manifest.generation !== generationName || verified.syncedAt !== snapshot.syncedAt) {
       throw new Error('La libreria non e rimasta leggibile dopo il salvataggio.');
     }
 
@@ -323,6 +331,7 @@ export async function saveLibrary(
     try {
       await AsyncStorage.removeItem(LEGACY_KEY);
     } catch {}
+    return verified;
   } catch (error) {
     if (manifestCommitted) {
       try {
@@ -346,10 +355,10 @@ export async function saveLibrary(
 export async function clearLibrary(): Promise<void> {
   if (Platform.OS === 'web') {
     await clearWebLibrary();
-    await AsyncStorage.multiRemove([WEB_KEY, LEGACY_KEY]);
+    await AsyncStorage.removeMany([WEB_KEY, LEGACY_KEY]);
     return;
   }
-  await AsyncStorage.multiRemove([WEB_KEY, LEGACY_KEY]);
+  await AsyncStorage.removeMany([WEB_KEY, LEGACY_KEY]);
   const legacyFile = new File(Paths.document, LEGACY_FILE_NAME);
   if (legacyFile.exists) legacyFile.delete();
   const root = new Directory(Paths.document, ROOT_DIRECTORY);

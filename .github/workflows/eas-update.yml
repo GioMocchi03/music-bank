@@ -1,0 +1,65 @@
+name: Publish Expo update
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish OTA update
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # JavaScript that needs new native code must ship with a new APK, not over the air.
+      - name: Check native changes since the last release
+        id: native
+        run: |
+          # A tag alone does not prove the APK was published: compare with the latest release that ships one.
+          if ! last_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select((.draft or .prerelease) | not) | select(any(.assets[]; .name | endswith(".apk")))][0].tag_name // empty')" || [ -z "$last_tag" ]; then
+            echo "::warning::No published APK release could be verified: OTA skipped."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last_runtime="$(git show "$last_tag:app.json" | jq -r '.expo.runtimeVersion')"
+          runtime="$(jq -r '.expo.runtimeVersion' app.json)"
+          if [ "$runtime" != "$last_runtime" ]; then
+            echo "::notice::Runtime $runtime has no published APK yet (last release $last_tag): OTA skipped."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif ! git diff --quiet "$last_tag" HEAD -- android modules package-lock.json; then
+            echo "::warning::Native code changed since $last_tag: publish a new APK release instead of an OTA update."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/setup-node@v4
+        if: steps.native.outputs.skip != 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - if: steps.native.outputs.skip != 'true'
+        run: npm ci
+      - if: steps.native.outputs.skip != 'true'
+        run: npm run check
+      - name: Verify Expo token
+        if: steps.native.outputs.skip != 'true'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "EXPO_TOKEN repository secret is missing. Add it in Settings > Secrets and variables > Actions." >&2
+            exit 1
+          fi
+      - if: steps.native.outputs.skip != 'true'
+        run: npx eas-cli update --channel production --message "Automatic update ${{ github.sha }}" --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

@@ -19,9 +19,15 @@ import androidx.media3.session.MediaSession
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Native Media3 catalogue exposed to Android Auto.
@@ -34,23 +40,66 @@ import java.util.Locale
 class MusicBankAutoService : MediaLibraryService() {
   private var player: ExoPlayer? = null
   private var librarySession: MediaLibrarySession? = null
-  private val catalogue = AutoCatalogue()
+  @Volatile private var catalogue = AutoCatalogue()
   private var observer: FileObserver? = null
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val mainExecutor = Executor { mainHandler.post(it) }
+  // Parsing a multi-megabyte catalogue and rebuilding its indexes must never block the UI.
+  private val catalogueLoader: ExecutorService = Executors.newSingleThreadExecutor { task ->
+    Thread(task, "music-bank-auto-catalogue").apply { isDaemon = true }
+  }
+  private val refreshQueued = AtomicBoolean(false)
+  private val initialLoad: SettableFuture<Unit> = SettableFuture.create()
+  @Volatile private var attemptedStamp = Long.MIN_VALUE
+  @Volatile private var destroyed = false
 
+  private fun catalogueStamp(file: File): Long = if (file.exists()) file.lastModified() else -1L
+
+  /** Bridge refreshes and FileObserver events for the same write collapse into one load. */
   private fun refresh() {
-    catalogue.load(File(filesDir, CATALOGUE_FILE))
-    librarySession?.let { session ->
-      catalogue.parentIds().forEach { id ->
-        session.notifyChildrenChanged(id, catalogue.children(id).size, null)
-      }
+    if (destroyed || !refreshQueued.compareAndSet(false, true)) return
+    try {
+      catalogueLoader.execute(::loadCatalogue)
+    } catch (_: RejectedExecutionException) {
+      // FileObserver events can race with onDestroy() shutting the loader down.
+      refreshQueued.set(false)
     }
+  }
+
+  private fun loadCatalogue() {
+    refreshQueued.set(false)
+    val file = File(filesDir, CATALOGUE_FILE)
+    val stamp = catalogueStamp(file)
+    if (stamp == attemptedStamp) {
+      initialLoad.set(Unit)
+      return
+    }
+    attemptedStamp = stamp
+    val next = AutoCatalogue().apply { load(file) }
+    mainHandler.post {
+      if (destroyed) return@post
+      // A corrupt update keeps the last usable catalogue, as reloadIfChanged() does.
+      if (next.isLoaded) {
+        catalogue = next
+        librarySession?.let { session ->
+          next.parentIds().forEach { id ->
+            session.notifyChildrenChanged(id, next.children(id).size, null)
+          }
+        }
+      }
+      initialLoad.set(Unit)
+    }
+  }
+
+  private fun currentCatalogue(): AutoCatalogue {
+    if (catalogueStamp(File(filesDir, CATALOGUE_FILE)) != attemptedStamp) refresh()
+    return catalogue
   }
 
   override fun onCreate() {
     super.onCreate()
     activeService = this
-    catalogue.load(File(filesDir, CATALOGUE_FILE))
+    refresh()
 
     val audioAttributes = AudioAttributes.Builder()
       .setUsage(C.USAGE_MEDIA)
@@ -59,13 +108,17 @@ class MusicBankAutoService : MediaLibraryService() {
     player = ExoPlayer.Builder(this)
       .setAudioAttributes(audioAttributes, true)
       .build()
-    librarySession = MediaLibrarySession.Builder(this, player!!, CatalogueCallback(catalogue))
+    librarySession = MediaLibrarySession.Builder(
+      this,
+      player!!,
+      CatalogueCallback(::currentCatalogue, initialLoad, mainExecutor),
+    )
       .setId("music-bank-auto")
       .build()
     @Suppress("DEPRECATION")
     val watcher = object : FileObserver(filesDir.path, FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE or FileObserver.DELETE) {
       override fun onEvent(event: Int, path: String?) {
-        if (path == CATALOGUE_FILE) mainHandler.post { refresh() }
+        if (path == CATALOGUE_FILE) refresh()
       }
     }
     observer = watcher
@@ -79,8 +132,10 @@ class MusicBankAutoService : MediaLibraryService() {
   }
 
   override fun onDestroy() {
+    destroyed = true
     observer?.stopWatching()
     observer = null
+    catalogueLoader.shutdownNow()
     mainHandler.removeCallbacksAndMessages(null)
     if (activeService === this) activeService = null
     librarySession?.release()
@@ -91,26 +146,31 @@ class MusicBankAutoService : MediaLibraryService() {
   }
 
   private class CatalogueCallback(
-    private val catalogue: AutoCatalogue,
+    private val current: () -> AutoCatalogue,
+    private val ready: ListenableFuture<Unit>,
+    private val mainExecutor: Executor,
   ) : MediaLibrarySession.Callback {
+    /** Requests that arrive while the first background load runs wait for it. */
+    private fun <T> whenReady(block: (AutoCatalogue) -> ListenableFuture<T>): ListenableFuture<T> =
+      if (ready.isDone) block(current())
+      else Futures.transformAsync(ready, { block(current()) }, mainExecutor)
+
     override fun onSubscribe(
       session: MediaLibrarySession,
       browser: MediaSession.ControllerInfo,
       parentId: String,
       params: LibraryParams?,
-    ): ListenableFuture<LibraryResult<Void>> {
-      catalogue.reloadIfChanged()
+    ): ListenableFuture<LibraryResult<Void>> = whenReady { catalogue ->
       session.notifyChildrenChanged(browser, parentId, catalogue.children(parentId).size, params)
-      return Futures.immediateFuture(LibraryResult.ofVoid(params))
+      return@whenReady Futures.immediateFuture(LibraryResult.ofVoid(params))
     }
 
     override fun onGetLibraryRoot(
       session: MediaLibrarySession,
       browser: MediaSession.ControllerInfo,
       params: LibraryParams?,
-    ): ListenableFuture<LibraryResult<MediaItem>> {
-      catalogue.reloadIfChanged()
-      return Futures.immediateFuture(LibraryResult.ofItem(catalogue.root, LibraryParams.Builder()
+    ): ListenableFuture<LibraryResult<MediaItem>> = whenReady { catalogue ->
+      return@whenReady Futures.immediateFuture(LibraryResult.ofItem(catalogue.root, LibraryParams.Builder()
         .setExtras(Bundle().apply {
           putBoolean("android.media.browse.SEARCH_SUPPORTED", true)
         }).build()))
@@ -123,10 +183,9 @@ class MusicBankAutoService : MediaLibraryService() {
       page: Int,
       pageSize: Int,
       params: LibraryParams?,
-    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-      catalogue.reloadIfChanged()
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = whenReady { catalogue ->
       val children = catalogue.children(parentId)
-      return Futures.immediateFuture(
+      return@whenReady Futures.immediateFuture(
         LibraryResult.ofItemList(paginate(children, page, pageSize), params),
       )
     }
@@ -135,10 +194,9 @@ class MusicBankAutoService : MediaLibraryService() {
       session: MediaLibrarySession,
       browser: MediaSession.ControllerInfo,
       mediaId: String,
-    ): ListenableFuture<LibraryResult<MediaItem>> {
-      catalogue.reloadIfChanged()
+    ): ListenableFuture<LibraryResult<MediaItem>> = whenReady { catalogue ->
       val item = catalogue.item(mediaId)
-      return if (item != null) {
+      return@whenReady if (item != null) {
         Futures.immediateFuture(LibraryResult.ofItem(item, null))
       } else {
         Futures.immediateFuture(
@@ -152,15 +210,14 @@ class MusicBankAutoService : MediaLibraryService() {
       browser: MediaSession.ControllerInfo,
       query: String,
       params: LibraryParams?,
-    ): ListenableFuture<LibraryResult<Void>> {
-      catalogue.reloadIfChanged()
+    ): ListenableFuture<LibraryResult<Void>> = whenReady { catalogue ->
       // Complete the command before delivering the result event. Legacy Auto browsers
       // bridge this event to their pending MediaBrowserCompat search request.
       val count = catalogue.search(query).size
       Handler(Looper.getMainLooper()).post {
         session.notifySearchResultChanged(browser, query, count, params)
       }
-      return Futures.immediateFuture(LibraryResult.ofVoid(params))
+      return@whenReady Futures.immediateFuture(LibraryResult.ofVoid(params))
     }
 
     override fun onGetSearchResult(
@@ -170,9 +227,8 @@ class MusicBankAutoService : MediaLibraryService() {
       page: Int,
       pageSize: Int,
       params: LibraryParams?,
-    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-      catalogue.reloadIfChanged()
-      return Futures.immediateFuture(
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = whenReady { catalogue ->
+      return@whenReady Futures.immediateFuture(
         LibraryResult.ofItemList(paginate(catalogue.search(query), page, pageSize), params),
       )
     }
@@ -183,33 +239,35 @@ class MusicBankAutoService : MediaLibraryService() {
       mediaItems: List<MediaItem>,
       startIndex: Int,
       startPositionMs: Long,
-    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-      catalogue.reloadIfChanged()
-      if (mediaItems.size == 1 && mediaItems.first().localConfiguration == null) {
+    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = whenReady { catalogue ->
+      if (mediaItems.size == 1) {
         val requested = mediaItems.first().mediaId
         val context = catalogue.playbackContext(requested)
         if (context.isNotEmpty()) {
-          val index = context.indexOfFirst { it.mediaId == requested }.coerceAtLeast(0)
-          return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(context, index, startPositionMs))
+          val embedded = requested.substringAfterLast(":song:", "")
+          val index = context.indexOfFirst {
+            it.mediaId == requested || (embedded.isNotEmpty() && it.mediaId == "song:$embedded")
+          }.coerceAtLeast(0)
+          return@whenReady Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(context, index, startPositionMs))
         }
       }
       val resolved = mediaItems.mapNotNull { item ->
         item.takeIf { it.localConfiguration != null } ?: catalogue.playableItem(item.mediaId)
       }
-      if (resolved.size != mediaItems.size) return Futures.immediateFailedFuture(IllegalArgumentException("Unknown media ID"))
-      return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(resolved, startIndex, startPositionMs))
+      if (resolved.size != mediaItems.size) return@whenReady Futures.immediateFailedFuture(IllegalArgumentException("Unknown media ID"))
+      return@whenReady Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(resolved, startIndex, startPositionMs))
     }
 
     override fun onAddMediaItems(
       mediaSession: MediaSession,
       controller: MediaSession.ControllerInfo,
       mediaItems: List<MediaItem>,
-    ): ListenableFuture<List<MediaItem>> {
-      catalogue.reloadIfChanged()
+    ): ListenableFuture<List<MediaItem>> = whenReady { catalogue ->
       val resolved = mediaItems.mapNotNull { requested ->
-        requested.takeIf { it.localConfiguration != null } ?: catalogue.playableItem(requested.mediaId)
+        if (requested.mediaId.contains(":song:")) catalogue.playableItem(requested.mediaId)
+        else requested.takeIf { it.localConfiguration != null } ?: catalogue.playableItem(requested.mediaId)
       }
-      return Futures.immediateFuture(resolved)
+      return@whenReady Futures.immediateFuture(resolved)
     }
 
     private fun paginate(items: List<MediaItem>, page: Int, pageSize: Int): List<MediaItem> {
@@ -224,6 +282,8 @@ class MusicBankAutoService : MediaLibraryService() {
     private var sourceFile: File? = null
     private var lastModified = Long.MIN_VALUE
     private var songs = emptyList<AutoSong>()
+    private var playlists = emptyList<AutoPlaylist>()
+    private var radios = emptyList<AutoRadio>()
     private var metadata: JSONObject? = null
     private var itemsById = emptyMap<String, MediaItem>()
     private var childrenById = emptyMap<String, List<MediaItem>>()
@@ -248,8 +308,19 @@ class MusicBankAutoService : MediaLibraryService() {
 
     fun parentIds(): Set<String> = childrenById.keys
 
+    val isLoaded: Boolean
+      get() = lastModified != Long.MIN_VALUE
+
     fun playbackContext(mediaId: String): List<MediaItem> {
-      val song = songs.firstOrNull { it.mediaId == mediaId } ?: return emptyList()
+      // Tapping inside a playlist or the radio list queues that container, like the phone.
+      if (mediaId.startsWith("playlist:")) {
+        val playlistId = mediaId.removePrefix("playlist:").substringBefore(":song:")
+        val playlist = playlists.firstOrNull { it.id == playlistId } ?: return emptyList()
+        return playlist.songIds.mapNotNull { playableItem("song:$it") }
+      }
+      if (mediaId.startsWith("radio:")) return children(RADIOS_ID)
+      val embedded = mediaId.substringAfterLast(":song:", "")
+      val song = songs.firstOrNull { it.id == embedded || it.mediaId == mediaId } ?: return emptyList()
       val sameAlbum = songs.filter {
         if (song.albumId != null) it.albumId == song.albumId
         else it.album == song.album && it.artist == song.artist
@@ -261,8 +332,14 @@ class MusicBankAutoService : MediaLibraryService() {
 
     fun item(mediaId: String): MediaItem? = itemsById[mediaId]
 
-    fun playableItem(mediaId: String): MediaItem? =
-      itemsById[mediaId]?.takeIf { it.mediaMetadata.isPlayable == true }
+    fun playableItem(mediaId: String): MediaItem? {
+      // Playlist entries carry their container in the id; resolve them to the shared
+      // "song:<id>" item so queue ids stay comparable with the phone.
+      val embedded = mediaId.substringAfterLast(":song:", "")
+      val normalized = if (embedded.isNotEmpty() && mediaId != "song:$embedded") "song:$embedded" else mediaId
+      return itemsById[normalized]?.takeIf { it.mediaMetadata.isPlayable == true }
+        ?: itemsById[mediaId]?.takeIf { it.mediaMetadata.isPlayable == true }
+    }
 
     fun search(query: String): List<MediaItem> {
       val needle = normalizeAutoQuery(query)
@@ -285,18 +362,20 @@ class MusicBankAutoService : MediaLibraryService() {
       val file = sourceFile ?: return
       val modified = if (file.exists()) file.lastModified() else -1L
       val parsed = try {
-        if (!file.exists()) null to emptyList() else {
+        if (!file.exists()) Triple(null, emptyList(), emptyList<AutoPlaylist>() to emptyList<AutoRadio>()) else {
           val document = JSONObject(file.readText())
           val entities = JSONObject().apply {
             listOf("albums", "artists", "genres").forEach { key ->
               document.optJSONArray(key)?.let { put(key, it) }
             }
           }
-          entities to parseSongs(document)
+          Triple(entities, parseSongs(document), parseCollections(document))
         }
       } catch (_: Exception) { return }
       metadata = parsed.first
       songs = parsed.second
+      playlists = parsed.third.first
+      radios = parsed.third.second
       lastModified = modified
       rebuildIndex()
     }
@@ -321,6 +400,7 @@ class MusicBankAutoService : MediaLibraryService() {
               track = value.optInt("track", 0),
               discNumber = value.optInt("discNumber", 0),
               durationSeconds = value.optLong("duration", 0L),
+              year = value.optInt("year", 0),
               genre = value.cleanString("genre"),
               starred = value.cleanString("starred") != null,
               artworkUrl = value.cleanString("coverUrl"),
@@ -331,15 +411,53 @@ class MusicBankAutoService : MediaLibraryService() {
       }
     }
 
+    private fun parseCollections(json: JSONObject): Pair<List<AutoPlaylist>, List<AutoRadio>> {
+      val playlistArray = json.optJSONArray("playlists")
+      val parsedPlaylists = buildList {
+        for (index in 0 until (playlistArray?.length() ?: 0)) {
+          val value = playlistArray!!.optJSONObject(index) ?: continue
+          val id = value.cleanString("id") ?: continue
+          val name = value.cleanString("name") ?: continue
+          val ids = value.optJSONArray("songIds")
+          add(
+            AutoPlaylist(
+              id = id,
+              name = name,
+              owner = value.cleanString("owner"),
+              coverUrl = value.cleanString("coverUrl"),
+              songIds = buildList {
+                for (position in 0 until (ids?.length() ?: 0)) {
+                  val songId = ids!!.optString(position).trim()
+                  if (songId.isNotBlank()) add(songId)
+                }
+              },
+            ),
+          )
+        }
+      }
+      val radioArray = json.optJSONArray("radios")
+      val parsedRadios = buildList {
+        for (index in 0 until (radioArray?.length() ?: 0)) {
+          val value = radioArray!!.optJSONObject(index) ?: continue
+          val id = value.cleanString("id") ?: continue
+          val name = value.cleanString("name") ?: continue
+          val streamUrl = value.cleanString("streamUrl") ?: continue
+          add(AutoRadio(id = id, name = name, streamUrl = streamUrl, homePageUrl = value.cleanString("homePageUrl")))
+        }
+      }
+      return parsedPlaylists to parsedRadios
+    }
+
     private fun rebuildIndex() {
       val itemIndex = linkedMapOf<String, MediaItem>()
       val childIndex = linkedMapOf<String, List<MediaItem>>()
 
+      // Four root tabs, like the phone library hub: Android Auto shows at most four.
       val categories = listOf(
         browsable(ALBUMS_ID, "Album"),
         browsable(ARTISTS_ID, "Artisti"),
-        browsable(GENRES_ID, "Generi musicali"),
         browsable(TRACKS_ID, "Brani"),
+        browsable(COLLECTIONS_ID, "Raccolte"),
       )
       itemIndex[ROOT_ID] = root
       categories.forEach { itemIndex[it.mediaId] = it }
@@ -417,7 +535,72 @@ class MusicBankAutoService : MediaLibraryService() {
       itemIndex[FAVORITES_ID] = browsable(FAVORITES_ID, "Preferiti")
       childIndex[FAVORITES_ID] = songs.filter { it.starred }.mapNotNull { itemIndex[it.mediaId] }
         .sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
-      val searchableIds = listOf(ALBUMS_ID, ARTISTS_ID, GENRES_ID, TRACKS_ID)
+
+      itemIndex[GENRES_ID] = browsable(GENRES_ID, "Generi musicali")
+      itemIndex[PLAYLISTS_ID] = browsable(PLAYLISTS_ID, "Playlist")
+      itemIndex[RADIOS_ID] = browsable(RADIOS_ID, "Radio Internet")
+      itemIndex[YEARS_ID] = browsable(YEARS_ID, "Anni")
+
+      childIndex[PLAYLISTS_ID] = playlists.map { playlist ->
+        val folderId = "playlist:${playlist.id}"
+        val entries = playlist.songIds.mapNotNull { songId ->
+          itemIndex["song:$songId"]?.let { item ->
+            contextualItem("$folderId:song:$songId", item).also { itemIndex[it.mediaId] = it }
+          }
+        }
+        childIndex[folderId] = entries
+        browsable(folderId, playlist.name, playlist.coverUrl).also { itemIndex[folderId] = it }
+      }.sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
+
+      childIndex[RADIOS_ID] = radios.map { station ->
+        val mediaId = "radio:${station.id}"
+        MediaItem.Builder()
+          .setMediaId(mediaId)
+          .setUri(station.streamUrl)
+          .setMediaMetadata(
+            MediaMetadata.Builder()
+              .setTitle(station.name)
+              .setSubtitle(station.homePageUrl)
+              .setIsBrowsable(false)
+              .setIsPlayable(true)
+              .build(),
+          )
+          .build()
+          .also { itemIndex[mediaId] = it }
+      }.sortedBy { normalizeAutoQuery(it.mediaMetadata.title.toString()) }
+
+      // Anni mirrors the phone tile: albums grouped by their year, newest first.
+      val albumYears = linkedMapOf<Int, MutableList<MediaItem>>()
+      val albumsMeta = metadata?.optJSONArray("albums")
+      if (albumsMeta != null) {
+        for (index in 0 until albumsMeta.length()) {
+          val album = albumsMeta.optJSONObject(index) ?: continue
+          val year = album.optInt("year", 0)
+          val id = album.cleanString("id") ?: continue
+          if (year <= 0) continue
+          itemIndex["album:${Uri.encode(id)}"]?.let { albumYears.getOrPut(year) { mutableListOf() }.add(it) }
+        }
+      } else {
+        songs.forEach { song ->
+          if (song.year > 0) {
+            itemIndex[song.mediaId]?.let { albumYears.getOrPut(song.year) { mutableListOf() }.add(it) }
+          }
+        }
+      }
+      childIndex[YEARS_ID] = albumYears.entries.sortedByDescending { it.key }.map { (year, items) ->
+        val folderId = "year:$year"
+        childIndex[folderId] = items
+        browsable(folderId, year.toString(), items.firstOrNull()?.mediaMetadata?.artworkUri?.toString())
+          .also { itemIndex[folderId] = it }
+      }
+
+      // Raccolte groups the remaining phone library tiles: Generi, Preferiti, Playlist,
+      // Radio Internet, Anni. Empty sections stay hidden.
+      childIndex[COLLECTIONS_ID] = listOf(GENRES_ID, FAVORITES_ID, PLAYLISTS_ID, RADIOS_ID, YEARS_ID)
+        .filter { childIndex[it].orEmpty().isNotEmpty() }
+        .mapNotNull { itemIndex[it] }
+
+      val searchableIds = listOf(ALBUMS_ID, ARTISTS_ID, GENRES_ID, TRACKS_ID, PLAYLISTS_ID, RADIOS_ID)
         .flatMap { childIndex[it].orEmpty() }.map { it.mediaId }.toSet()
       // Search the original entities, never synthetic browse sections. Normalize once
       // per catalogue refresh rather than repeatedly scanning/allocating on each query.
@@ -492,6 +675,15 @@ class MusicBankAutoService : MediaLibraryService() {
         .build()
     }
 
+    /** Same playable item exposed under a container-scoped id, so taps keep context. */
+    private fun contextualItem(mediaId: String, source: MediaItem): MediaItem {
+      return MediaItem.Builder()
+        .setMediaId(mediaId)
+        .setUri(source.localConfiguration?.uri)
+        .setMediaMetadata(source.mediaMetadata)
+        .build()
+    }
+
     private fun browsable(mediaId: String, title: String, artworkUrl: String? = null): MediaItem {
       return MediaItem.Builder()
         .setMediaId(mediaId)
@@ -523,6 +715,7 @@ class MusicBankAutoService : MediaLibraryService() {
     val track: Int,
     val discNumber: Int,
     val durationSeconds: Long,
+    val year: Int,
     val genre: String?,
     val starred: Boolean,
     val artworkUrl: String?,
@@ -530,6 +723,21 @@ class MusicBankAutoService : MediaLibraryService() {
   ) {
     val mediaId: String get() = "song:$id"
   }
+
+  private data class AutoPlaylist(
+    val id: String,
+    val name: String,
+    val owner: String?,
+    val coverUrl: String?,
+    val songIds: List<String>,
+  )
+
+  private data class AutoRadio(
+    val id: String,
+    val name: String,
+    val streamUrl: String,
+    val homePageUrl: String?,
+  )
 
   companion object {
     private const val CATALOGUE_FILE = "music-bank-auto-catalog.json"
@@ -539,6 +747,10 @@ class MusicBankAutoService : MediaLibraryService() {
     private const val GENRES_ID = "music-bank-genres"
     private const val TRACKS_ID = "music-bank-tracks"
     private const val FAVORITES_ID = "music-bank-favorites"
+    private const val COLLECTIONS_ID = "music-bank-collections"
+    private const val PLAYLISTS_ID = "music-bank-playlists"
+    private const val RADIOS_ID = "music-bank-radios"
+    private const val YEARS_ID = "music-bank-years"
     fun currentAudioSessionId(): Int = activeService?.player?.audioSessionId ?: 0
     private var activeService: MusicBankAutoService? = null
     fun refreshCatalogue() { activeService?.refresh() }

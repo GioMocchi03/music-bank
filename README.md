@@ -12,7 +12,7 @@
   <p>
     <a href="https://github.com/GioMocchi03/music-bank/releases/latest"><img src="https://img.shields.io/github/v/release/GioMocchi03/music-bank?style=for-the-badge&color=c8ff38&labelColor=15121f" alt="Ultima release" /></a>
     <img src="https://img.shields.io/badge/Android-7%2B-c8ff38?style=for-the-badge&labelColor=15121f" alt="Android 7 o superiore" />
-    <img src="https://img.shields.io/badge/Expo-57-7657ff?style=for-the-badge&labelColor=15121f" alt="Expo 57" />
+    <img src="https://img.shields.io/badge/Expo-58-7657ff?style=for-the-badge&labelColor=15121f" alt="Expo 58" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/licenza-MIT-7657ff?style=for-the-badge&labelColor=15121f" alt="Licenza MIT" /></a>
   </p>
 </div>
@@ -67,7 +67,7 @@ Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 | Spazio | Numero brani, spazio occupato, filtro album/artista e rimozione delle copie locali. |
 | Home | Nome autenticato, saluto in base all'ora e banner variabile fra gli artisti più ascoltati secondo i dati disponibili. |
 | Server | HTTPS automatico negli URL senza protocollo; disconnessione esplicita che conserva i download. |
-| Android Auto | Servizio nativo Media3 per la libreria; da verificare su auto/dispositivi reali. |
+| Android Auto | Servizio nativo Media3 con le sezioni della Libreria: album, artisti, brani, generi, preferiti, playlist, radio e anni; da verificare su auto/dispositivi reali. |
 
 ## Piattaforme e stato
 
