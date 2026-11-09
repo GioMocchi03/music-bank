@@ -6,6 +6,7 @@ type WebAudioPlayer = {
   replace?: (source: unknown) => void;
   seekTo?: (seconds: number) => Promise<void>;
   play?: () => void;
+  pause?: () => void;
   __musicBankEq?: {
     context: AudioContext;
     media: HTMLAudioElement;
@@ -38,10 +39,21 @@ export function configureWebEqualizer(
       target.sourceNode = null;
       delete target.__musicBankEq;
       if (source && target.replace && target.seekTo) {
+        // Il nuovo elemento audio ignora il seek finche non ha i metadati.
+        if (wasPlaying) target.pause?.();
         target.replace(source);
-        void target.seekTo(position).then(() => {
-          if (wasPlaying) target.play?.();
-        });
+        const restored = target.media;
+        const resume = () => {
+          if (!restored || target.media !== restored) return;
+          void target.seekTo?.(position).then(() => {
+            if (wasPlaying && target.media === restored) target.play?.();
+          });
+        };
+        if (restored && restored.readyState < 1) {
+          restored.addEventListener('loadedmetadata', resume, { once: true });
+        } else {
+          resume();
+        }
       }
       return true;
     }
