@@ -3,7 +3,14 @@
 Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
-## Non ancora pubblicato
+## 1.3.20 — 2026-11-09 · build 34
+
+### Sicurezza
+
+- Android Auto e gli altri controller multimediali ricevono le copertine come
+  indirizzi locali `content://` opachi, non più come URL Navidrome con utente,
+  token e salt. L'app scarica l'immagine quando viene richiesta e la tiene in una
+  cache locale separata per utente; al logout cancella cache e URL autenticati.
 
 ### Migliorato
 
