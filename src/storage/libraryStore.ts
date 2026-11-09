@@ -369,6 +369,10 @@ export async function loadLibrary(): Promise<LibrarySnapshot | null> {
     try {
       const indexedValue = await readWebLibrary();
       if (indexedValue) return parseLibrary(indexedValue);
+    } catch {
+      // La cache legacy resta leggibile anche se IndexedDB non e disponibile.
+    }
+    try {
       const legacyValue = await AsyncStorage.getItem(WEB_KEY)
         ?? await AsyncStorage.getItem(LEGACY_KEY);
       if (!legacyValue) return null;

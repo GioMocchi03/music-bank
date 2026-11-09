@@ -63,6 +63,7 @@ function webStore() {
   const legacy = new Map<string, string>();
   const events: string[] = [];
   let abortWrite = false;
+  let openFailure = false;
   const exports = {} as {
     saveLibrary(snapshot: LibrarySnapshot): Promise<LibrarySnapshot>;
     loadLibrary(): Promise<LibrarySnapshot | null>;
@@ -111,13 +112,13 @@ function webStore() {
     },
     indexedDB: {
       open: () => {
-        const req: any = { result: db };
-        setImmediate(() => req.onsuccess());
+        const req: any = { result: db, error: new Error('IndexedDB non disponibile') };
+        setImmediate(() => openFailure ? req.onerror() : req.onsuccess());
         return req;
       },
     },
   });
-  return { ...exports, values, legacy, events, abort: () => { abortWrite = true; } };
+  return { ...exports, values, legacy, events, abort: () => { abortWrite = true; }, failOpen: () => { openFailure = true; } };
 }
 
 const webSnapshot: LibrarySnapshot = {
@@ -157,4 +158,13 @@ test('desktop conserva la cache legacy se la transazione IndexedDB fallisce', as
   assert.equal(store.values.size, 0);
   assert.equal(store.legacy.size, 1);
   assert.deepEqual(store.events, ['close']);
+});
+
+test('desktop ripristina la cache legacy anche se IndexedDB non si apre', async () => {
+  const store = webStore();
+  store.legacy.set('gio-music.library.v3', JSON.stringify(webSnapshot));
+  store.failOpen();
+  assert.equal((await store.loadLibrary())?.songs[0].coverUrl, 'cover-from-album');
+  assert.equal(store.legacy.size, 1);
+  assert.equal(store.values.size, 0);
 });
