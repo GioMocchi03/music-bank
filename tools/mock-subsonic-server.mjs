@@ -63,6 +63,23 @@ const server = http.createServer((request, response) => {
     wav.write('data', 36);
     wav.writeUInt32LE(samples * 2, 40);
     response.setHeader('Content-Type', 'audio/wav');
+    response.setHeader('Accept-Ranges', 'bytes');
+    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? '');
+    if (range && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, wav.length - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), wav.length - 1) : wav.length - 1;
+      if (start > end) {
+        response.statusCode = 416;
+        response.setHeader('Content-Range', `bytes */${wav.length}`);
+        response.end();
+        return;
+      }
+      response.statusCode = 206;
+      response.setHeader('Content-Range', `bytes ${start}-${end}/${wav.length}`);
+      response.setHeader('Content-Length', String(end - start + 1));
+      response.end(wav.subarray(start, end + 1));
+      return;
+    }
     response.setHeader('Content-Length', String(wav.length));
     response.end(wav);
     return;
