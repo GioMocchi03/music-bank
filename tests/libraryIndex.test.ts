@@ -73,3 +73,12 @@ test('annulla indici obsoleti e ricostruisce preferiti e risultati dopo un aggio
   assert.equal(empty.songsById.size, 0);
   assert.deepEqual(empty.years, []);
 });
+
+test('la ricerca locale non indicizza artisti con 0 album', async () => {
+  const artists: Artist[] = [
+    { id: 'a1', name: "L'Entourloop", albumCount: 5 },
+    { id: 'a2', name: "L'Entourloop, LMK", albumCount: 0 },
+  ];
+  const index = await prepareLibraryIndex([], artists, []);
+  assert.deepEqual(index?.search.artists.map((entry) => entry.item.id), ['a1']);
+});

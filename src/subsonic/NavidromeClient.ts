@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import { md5 } from 'js-md5';
 import { isAllowedServerUrl, normalizeServerUrl } from '../utils/connection';
+import { hasAlbums } from '../utils/search';
 
 export type NavidromeConnection = {
   serverUrl: string;
@@ -401,7 +402,7 @@ export class NavidromeClient {
     const result = payload.searchResult3 ?? {};
     return {
       albums: await this.decorateAlbums(result.album ?? []),
-      artists: result.artist ?? [],
+      artists: (result.artist ?? []).filter(hasAlbums),
       songs: await this.decorateSongs(result.song ?? []),
     };
   }
