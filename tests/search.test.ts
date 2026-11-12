@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  hasAlbums,
   levenshteinDistance,
   normalizeSearchText,
   rankDirectSearchItems,
@@ -54,4 +55,11 @@ test('uscire dalla ricerca annulla anche un filtro locale ancora in corso', asyn
   const pending = rankSearchItemsInSlices(entries, 'jazz', 100, controller.signal);
   setTimeout(() => controller.abort(), 0);
   assert.equal(await pending, null);
+});
+
+test('esclude gli artisti senza album ma tiene quelli senza conteggio', () => {
+  assert.equal(hasAlbums({ albumCount: 0 }), false);
+  assert.equal(hasAlbums({ albumCount: '0' }), false);
+  assert.equal(hasAlbums({ albumCount: 5 }), true);
+  assert.equal(hasAlbums({}), true);
 });

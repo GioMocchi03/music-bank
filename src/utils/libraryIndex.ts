@@ -1,6 +1,6 @@
 import type { Album, Artist, Song } from '../subsonic/NavidromeClient';
 import { forEachInSlices } from './backgroundWork.ts';
-import { normalizeSearchText, type SearchEntry } from './search.ts';
+import { hasAlbums, normalizeSearchText, type SearchEntry } from './search.ts';
 
 export type LibraryIndex = {
   songsById: Map<string, Song>;
@@ -39,6 +39,7 @@ export async function prepareLibraryIndex(
   }, signal)) return null;
   index.years = [...index.yearCounts.keys()].sort((a, b) => b - a);
   if (!await forEachInSlices(artists, (artist) => {
+    if (!hasAlbums(artist)) return;
     index.search.artists.push({ item: artist, text: normalizeSearchText(artist.name) });
   }, signal)) return null;
   if (!await forEachInSlices(songs, (song) => {

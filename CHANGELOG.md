@@ -3,6 +3,14 @@
 Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
+## Aggiornamento OTA su 1.3.20 — 2026-11-12
+
+### Corretto
+
+- La ricerca non mostra più come artisti le collaborazioni dei singoli brani
+  (per esempio «L'Entourloop, LMK») che Navidrome restituisce con 0 album e una
+  pagina vuota. I loro brani restano tra i risultati «Brani».
+
 ## 1.3.20 — 2026-11-09 · build 34
 
 ### Sicurezza

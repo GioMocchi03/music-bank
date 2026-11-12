@@ -2,6 +2,10 @@ import { forEachInSlices } from './backgroundWork.ts';
 
 export type SearchEntry<T> = { item: T; text: string };
 
+export function hasAlbums(artist: { albumCount?: number | string }): boolean {
+  return artist.albumCount === undefined || Number(artist.albumCount) > 0;
+}
+
 export function normalizeSearchText(value: string): string {
   return value
     .normalize('NFD')
