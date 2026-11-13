@@ -113,11 +113,48 @@ xattr -dr com.apple.quarantine "/Applications/Music Bank.app"
 
 La build automatica non sostituisce una prova di installazione, login e ascolto su macOS.
 
+## App iOS
+
+iOS usa la stessa app Expo di Android (`app.json`, bundle `io.servergio.giomusic`),
+non il frontend desktop: streaming, coda, riproduzione in background con controlli
+sulla schermata di blocco (expo-audio), download offline (expo-file-system), password
+nel Keychain (SecureStore) e aggiornamenti OTA sul canale `production`. Android Auto,
+il player Media3 e l'equalizzatore sono moduli nativi Android e non esistono su iOS.
+
+`ios/` non è versionato: viene rigenerato da `app.json` con `expo prebuild --platform ios`
+(senza `--clean`, che toccherebbe anche `android/`). Su un Mac con Xcode e CocoaPods:
+
+```bash
+npm ci
+npx expo prebuild --platform ios
+npm run ios
+```
+
+Il workflow **Music Bank iOS** genera il progetto su un runner macOS, imposta il canale
+OTA in `Expo.plist`, compila in Release senza firma e carica l'artefatto
+**Music-Bank-iOS** (`MusicBank-vX.Y.Z-ios-unsigned.ipa`).
+
+Senza un account Apple Developer a pagamento la `.ipa` si firma sul proprio Mac con un
+Apple ID gratuito, tramite [Sideloadly](https://sideloadly.io/) o
+[AltStore](https://altstore.io/):
+
+1. collegare l'iPhone al Mac e aprire la `.ipa` con Sideloadly/AltStore, accedendo
+   con il proprio Apple ID;
+2. sull'iPhone attivare **Impostazioni → Privacy e sicurezza → Modalità sviluppatore**
+   e riavviare;
+3. autorizzare il proprio Apple ID in **Impostazioni → Generali → VPN e gestione
+   dispositivi**.
+
+La firma gratuita scade dopo 7 giorni: reinstallare la stessa `.ipa` (AltStore può
+rinnovarla automaticamente con AltServer attivo sulla stessa rete). Reinstallare sopra
+l'app esistente conserva dati e download; eliminarla dall'iPhone li cancella.
+Gli aggiornamenti OTA arrivano anche su iOS finché non cambia il codice nativo; una
+nuova versione nativa richiede una nuova `.ipa`.
+La build automatica non sostituisce una prova su iPhone reale.
+
 ## Altre piattaforme e controlli
 
-L'export iOS verifica il bundle, non Xcode o una IPA. La cartella iOS non è mantenuta:
-occorre predisporre e testare un progetto dedicato su macOS. Web non supporta download
-nativi/Android Auto e richiede CORS corretto sul server.
+Web non supporta download nativi/Android Auto e richiede CORS corretto sul server.
 
 - CI push/PR: versioni, TypeScript, test ed export multipiattaforma.
 - Build Android manuale in Actions: release non firmata, senza chiavi private.

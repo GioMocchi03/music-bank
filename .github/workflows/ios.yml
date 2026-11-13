@@ -1,0 +1,99 @@
+name: Music Bank iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - ios-app
+  pull_request:
+    paths:
+      - '.github/workflows/ios.yml'
+      - '.nvmrc'
+      - 'App.tsx'
+      - 'index.ts'
+      - 'app.json'
+      - 'package*.json'
+      - 'src/**'
+      - 'modules/**'
+      - 'assets/**'
+      - 'tools/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      CI: 'true'
+      EXPO_OFFLINE: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check shared app on macOS
+        run: npm run check
+
+      # ios/ non è versionato: viene generato qui e android/ resta intatto.
+      - name: Generate iOS project
+        run: |
+          npx expo prebuild --platform ios
+          git diff --exit-code -- android app.json package.json
+
+      # EAS Build imposta il canale da eas.json; questa build Xcode no.
+      - name: Set OTA channel
+        run: |
+          plist=ios/MusicBank/Supporting/Expo.plist
+          /usr/libexec/PlistBuddy -c 'Delete :EXUpdatesRequestHeaders' "$plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Add :EXUpdatesRequestHeaders dict' "$plist"
+          /usr/libexec/PlistBuddy -c 'Add :EXUpdatesRequestHeaders:expo-channel-name string production' "$plist"
+
+      - name: Build unsigned app
+        run: |
+          xcodebuild archive \
+            -workspace ios/MusicBank.xcworkspace \
+            -scheme MusicBank \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/MusicBank.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=''
+
+      - name: Package unsigned ipa
+        run: |
+          version="$(jq -r '.expo.version' app.json)"
+          app=build/MusicBank.xcarchive/Products/Applications/MusicBank.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")" = "$(jq -r '.expo.ios.bundleIdentifier' app.json)"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")" = "$version"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :EXUpdatesRequestHeaders:expo-channel-name' "$app/Expo.plist")" = production
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$app/Info.plist" | grep -qx '    audio'
+          test -s "$app/main.jsbundle"
+          mkdir -p release-output/Payload
+          cp -R "$app" release-output/Payload/
+          (cd release-output && zip -qry "MusicBank-v$version-ios-unsigned.ipa" Payload && rm -rf Payload)
+          ls -l release-output
+
+      - name: Upload ipa
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Music-Bank-iOS
+          path: release-output/*.ipa
+          if-no-files-found: error

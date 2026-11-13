@@ -787,7 +787,7 @@ function MusicBankApp() {
         await saveConnection(nextConnection);
 
         let autoWarning = false;
-        setMessage('Aggiornamento catalogo Android Auto…');
+        if (Platform.OS === 'android') setMessage('Aggiornamento catalogo Android Auto…');
         try {
           await saveAndroidAutoCatalog(restoredSnapshot.songs, client, restoredSnapshot);
         } catch {
@@ -2876,7 +2876,7 @@ function SettingsScreen({
         {section === 'updates' && <UpdateSettings />}
         {section === 'about' && (
           <View style={styles.settingsActionGroup}>
-            <SettingsActionRow icon="information-outline" title="Music Bank" subtitle={`Versione ${APP_VERSION} · build Android ${APP_BUILD}`} value="Condividi" onPress={onShareDiagnostics} />
+            <SettingsActionRow icon="information-outline" title="Music Bank" subtitle={Platform.OS === 'ios' ? `Versione ${APP_VERSION} · build iOS` : `Versione ${APP_VERSION} · build Android ${APP_BUILD}`} value="Condividi" onPress={onShareDiagnostics} />
             <SettingsActionRow icon="shield-lock-outline" title="Credenziali e privacy" subtitle={Platform.OS === 'web' ? 'Salvataggio locale del browser' : 'Password cifrata nel SecureStore del dispositivo'} value="Provider" onPress={() => onSection('server')} />
             <SettingsActionRow icon="book-open-variant" title="Protocollo OpenSubsonic" subtitle="Documentazione delle API utilizzate" value="Apri" onPress={() => void Linking.openURL('https://opensubsonic.netlify.app/docs/')} />
           </View>
@@ -2994,7 +2994,9 @@ function UpdateSettings() {
       <SettingsActionRow icon="cellphone-check" title="Versione installata" subtitle={`Music Bank ${APP_VERSION} · build ${APP_BUILD}`} value="Installata" onPress={() => {}} />
       <View style={styles.updateCard}>
         <Text style={styles.settingsRowTitle}>Aggiornamenti pubblici GitHub</Text>
-        <Text style={styles.updateHelp}>Controlla la release ufficiale senza account o token. L’installazione dell’APK richiede sempre la conferma di Android.</Text>
+        <Text style={styles.updateHelp}>{Platform.OS === 'ios'
+          ? 'Controlla la release ufficiale senza account o token. Su iPhone una nuova versione nativa si reinstalla dal Mac con Sideloadly o AltStore.'
+          : 'Controlla la release ufficiale senza account o token. L’installazione dell’APK richiede sempre la conferma di Android.'}</Text>
         <Pressable disabled={checking} style={[styles.syncButton, checking && styles.buttonDisabled]} onPress={() => void check()}>
           {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
           <Text style={styles.syncButtonText}>{checking ? 'Controllo…' : 'Controlla aggiornamenti'}</Text>
@@ -3008,7 +3010,7 @@ function UpdateSettings() {
       {release && compareVersions(release.version, APP_VERSION) > 0 && (
         <SettingsActionRow icon="download-circle" title={release.name} subtitle={release.apkName ?? `Versione ${release.version}`} value="Apri" onPress={() => void Linking.openURL(release.url)} />
       )}
-      <SettingsActionRow icon="open-in-new" title="Apri le release" subtitle="Download pubblico dell’APK e del checksum" value="GitHub" onPress={() => void Linking.openURL(PRIVATE_RELEASES_URL)} />
+      <SettingsActionRow icon="open-in-new" title="Apri le release" subtitle={Platform.OS === 'ios' ? 'Pagina delle release ufficiali' : 'Download pubblico dell’APK e del checksum'} value="GitHub" onPress={() => void Linking.openURL(PRIVATE_RELEASES_URL)} />
     </View>
   );
 }
@@ -3680,7 +3682,7 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
             </Pressable>
           </>
         ) : (
-          <Text style={styles.eqNotice}>L'equalizzatore integrato è disponibile nella build Android.</Text>
+          <Text style={styles.eqNotice}>{Platform.OS === 'ios' ? "L'equalizzatore integrato non è ancora disponibile su iOS." : "L'equalizzatore integrato è disponibile nella build Android."}</Text>
         )}
         {!!notice && <Text style={styles.eqNotice}>{notice}</Text>}
       </SafeAreaView>

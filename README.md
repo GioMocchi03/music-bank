@@ -77,7 +77,7 @@ Vedi [installazione e problemi comuni](docs/INSTALLATION.md).
 | Windows | App Tauri/WebView2 con frontend condiviso, cache IndexedDB ed equalizzatore Web Audio. Installer non firmato disponibile come artefatto Actions; niente download nativi o Android Auto. Vedi [sviluppo desktop](docs/DEVELOPMENT.md#app-desktop-windows-tauri). |
 | macOS | Stessa app Tauri desktop in WKWebView, universale Apple Silicon/Intel, macOS 11 o superiore. `.dmg` con firma ad hoc (non notarizzato) disponibile come artefatto Actions; niente download nativi o Android Auto. Vedi [app desktop macOS](docs/DEVELOPMENT.md#app-desktop-macos-tauri). |
 | Web | Interfaccia per sviluppo/verifica; niente download nativi o Android Auto. Il server deve consentire CORS. |
-| iOS | Sorgenti condivisi ed export JavaScript verificati; nessuna IPA o pubblicazione App Store. Serve un build iOS dedicato. |
+| iOS | App nativa Expo, iOS 16.4 o superiore: streaming, riproduzione in background con controlli sulla schermata di blocco, download offline e aggiornamenti OTA. Niente Android Auto/CarPlay né equalizzatore. `.ipa` non firmata come artefatto Actions, da installare con Sideloadly/AltStore e un Apple ID. Vedi [app iOS](docs/DEVELOPMENT.md#app-ios). |
 
 La **1.3.9 (23)** distingue le playlist create nell'app dalle raccolte del server,
 filtra le cartelle che duplicano album e controlla gli aggiornamenti pubblici senza token.
