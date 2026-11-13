@@ -60,6 +60,7 @@
     "desktop": "tauri dev",
     "export:desktop": "expo export --platform web --output-dir dist",
     "build:windows": "tauri build --bundles nsis -- --locked",
+    "build:macos": "tauri build --target universal-apple-darwin --bundles app,dmg -- --locked",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "doctor": "npx expo-doctor",

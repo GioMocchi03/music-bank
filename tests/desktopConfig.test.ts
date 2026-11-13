@@ -22,3 +22,11 @@ test('desktop rigenera il frontend prima del packaging e usa il lockfile Rust', 
   assert.match(config.build.beforeDevCommand, /--host localhost --port 8081$/);
   assert.equal(config.bundle.targets[0], 'nsis');
 });
+
+test('desktop macOS produce app e dmg universali con firma ad hoc e icona icns', () => {
+  assert.equal(pkg.scripts['build:macos'], 'tauri build --target universal-apple-darwin --bundles app,dmg -- --locked');
+  assert.equal(config.bundle.macOS.signingIdentity, '-');
+  assert.equal(config.bundle.macOS.minimumSystemVersion, '11.0');
+  assert.ok(config.bundle.icon.includes('icons/icon.icns'));
+  assert.ok(config.bundle.icon.includes('icons/icon.ico'));
+});
