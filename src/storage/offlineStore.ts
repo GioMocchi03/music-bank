@@ -36,20 +36,40 @@ function stableFileStem(id: string): string {
   return `${readable}-${(hash >>> 0).toString(16)}`;
 }
 
+function offlineDirectory(): Directory {
+  return new Directory(Paths.document, 'gio-music-offline');
+}
+
+function isCompleteFile(file: File, entry: OfflineTrack): boolean {
+  const expectedSize = entry.size && entry.size > 0 ? entry.size : entry.song.size;
+  return file.exists && file.size > 0 && (!expectedSize || file.size === expectedSize);
+}
+
+// iOS can move the app container on updates or reinstalls, so a stored absolute URI may go stale.
+function locateOfflineFile(entry: OfflineTrack): string | undefined {
+  try {
+    if (isCompleteFile(new File(entry.localUri), entry)) return entry.localUri;
+    const name = entry.localUri.split('/').pop();
+    if (!name) return undefined;
+    const moved = new File(offlineDirectory(), decodeURIComponent(name));
+    return isCompleteFile(moved, entry) ? moved.uri : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function loadOfflineTracks(legacySourceKey = 'legacy'): Promise<OfflineTrack[]> {
   const stored = await readPrivateJson<unknown>(FILE_NAME, KEY);
   if (!Array.isArray(stored)) return [];
-  const tracks = stored.filter(isOfflineTrack).filter((entry) => {
-    if (Platform.OS === 'web') return true;
-    try {
-      const file = new File(entry.localUri);
-      const expectedSize = entry.size && entry.size > 0 ? entry.size : entry.song.size;
-      return file.exists && file.size > 0 && (!expectedSize || file.size === expectedSize);
-    } catch {
-      return false;
-    }
+  let relocated = false;
+  const tracks = stored.filter(isOfflineTrack).flatMap((entry) => {
+    if (Platform.OS === 'web') return [entry];
+    const localUri = locateOfflineFile(entry);
+    if (!localUri) return [];
+    if (localUri !== entry.localUri) relocated = true;
+    return [{ ...entry, localUri }];
   }).map((entry) => ({ ...entry, song: { ...entry.song, offlineSourceKey: entry.song.offlineSourceKey ?? legacySourceKey } }));
-  if (stored.some((entry) => isOfflineTrack(entry) && !entry.song.offlineSourceKey)) {
+  if (relocated || stored.some((entry) => isOfflineTrack(entry) && !entry.song.offlineSourceKey)) {
     await writePrivateJson(FILE_NAME, tracks, KEY);
   }
   return tracks;
@@ -60,7 +80,7 @@ export async function downloadTrack(song: Song, sourceUrl: string, onProgress?: 
   const current = await loadOfflineTracks();
   const key = downloadKey(song);
   const previous = current.find((entry) => downloadKey(entry.song) === key);
-  const directory = new Directory(Paths.document, 'gio-music-offline');
+  const directory = offlineDirectory();
   if (!directory.exists) directory.create({ idempotent: true, intermediates: true });
   const extension = (song.suffix || 'mp3').replace(/[^a-z0-9]/gi, '');
   const stem = stableFileStem(key);
@@ -119,7 +139,7 @@ export async function removeOfflineTrack(key: string): Promise<OfflineTrack[]> {
 
 export async function clearOfflineTracks(): Promise<void> {
   if (Platform.OS !== 'web') {
-    const directory = new Directory(Paths.document, 'gio-music-offline');
+    const directory = offlineDirectory();
     if (directory.exists) directory.delete();
   }
   await deletePrivateJson(FILE_NAME, KEY);

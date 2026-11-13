@@ -51,7 +51,7 @@ function createStore({ status = 200, size = 123, contentType = 'audio/mpeg', wri
     clearOfflineTracks: () => Promise<void>;
   };
   vm.runInNewContext(compiled, { exports, require: (name: string) => { assert.ok(name in modules, name); return modules[name]; } });
-  return { ...exports, files, records: () => records };
+  return { ...exports, files, records: () => records, setRecords: (value: OfflineTrack[]) => { records = structuredClone(value); } };
 }
 
 const song = { id: 'same-id', title: 'Track', size: 123, offlineSourceKey: 'server-A' };
@@ -96,4 +96,15 @@ test('al caricamento un file troncato non risulta disponibile offline', async ()
   const track = await store.downloadTrack(song, 'https://music.example.org/audio');
   store.files.set(track.localUri, 12);
   assert.equal((await store.loadOfflineTracks()).length, 0);
+});
+
+test('ritrova i download quando iOS sposta il container dell’app', async () => {
+  const store = createStore();
+  const track = await store.downloadTrack(song, 'https://music.example/stream');
+  const name = track.localUri.split('/').pop()!;
+  const oldUri = `file:///old-container/gio-music-offline/${name}`;
+  store.setRecords([{ ...track, localUri: oldUri }]);
+  const [loaded] = await store.loadOfflineTracks();
+  assert.equal(loaded?.localUri, track.localUri);
+  assert.equal(store.records()[0]?.localUri, track.localUri);
 });
