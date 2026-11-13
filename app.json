@@ -8,7 +8,8 @@
     "userInterfaceStyle": "dark",
     "scheme": "giomusic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "io.servergio.giomusic"
     },
     "android": {
       "package": "io.servergio.giomusic",
