@@ -79,6 +79,40 @@ l'artefatto **Music-Bank-Windows** si scarica dalla pagina del run in Actions.
 L'installer non è firmato con un certificato Windows: SmartScreen può avvisare.
 La build automatica non sostituisce una prova di installazione, login e ascolto su Windows.
 
+## App desktop macOS (Tauri)
+
+Usa lo stesso progetto `src-tauri` e lo stesso frontend web di Windows, eseguito
+in WKWebView: valgono cache IndexedDB, equalizzatore Web Audio, CORS e assenza dei
+download nativi descritti sopra. Il pacchetto è universale (Apple Silicon e Intel)
+e richiede macOS 11 o superiore.
+
+Su macOS servono Node.js 24 LTS, Rust stable con i target `aarch64-apple-darwin` e
+`x86_64-apple-darwin` e gli strumenti da riga di comando di Xcode
+(`xcode-select --install`).
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm ci
+npm run desktop
+npm run build:macos
+```
+
+Il `.dmg` si trova in `src-tauri/target/universal-apple-darwin/release/bundle/dmg/`.
+Il workflow **Music Bank macOS** verifica l'app e costruisce il `.dmg` su un runner
+macOS; l'artefatto **Music-Bank-macOS** si scarica dalla pagina del run in Actions.
+
+Senza un account Apple Developer a pagamento l'app ha solo una firma ad hoc e non è
+notarizzata. Dopo averla trascinata in **Applicazioni**, il primo avvio viene
+bloccato: aprire **Impostazioni di Sistema → Privacy e sicurezza** e scegliere
+**Apri comunque**. Se macOS indica che l'app è danneggiata, rimuovere la quarantena
+del download (solo per un file scaricato dalle Actions ufficiali del repository):
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Music Bank.app"
+```
+
+La build automatica non sostituisce una prova di installazione, login e ascolto su macOS.
+
 ## Altre piattaforme e controlli
 
 L'export iOS verifica il bundle, non Xcode o una IPA. La cartella iOS non è mantenuta:
