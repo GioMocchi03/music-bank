@@ -37,8 +37,9 @@ function loadServiceWorker(cacheStorage: unknown, fetchImpl: (request: unknown) 
   return (url: string, mode = 'no-cors') => {
     let pending: Promise<unknown> | undefined;
     const request = { url, mode, method: 'GET', headers: new Map() };
-    listeners.fetch({ request, respondWith: (value: Promise<unknown>) => (pending = value) });
-    return pending;
+    const kept: Promise<unknown>[] = [];
+    listeners.fetch({ request, respondWith: (value: Promise<unknown>) => (pending = value), waitUntil: (value: Promise<unknown>) => kept.push(value) });
+    return pending && pending.then(async (response) => (await Promise.all(kept), response));
   };
 }
 
@@ -50,6 +51,15 @@ test('se la cache del browser è piena la webapp si carica lo stesso dalla rete'
 
   const broken = loadServiceWorker({ open: async () => { throw new Error('SecurityError'); } }, async () => ({ ok: true, clone() { return this; }, body: 'rete' }));
   assert.equal(((await broken('https://musicbank.test/_expo/static/js/web/app-abc.js')) as { body: string }).body, 'rete');
+});
+
+test('il service worker tiene vivo il salvataggio in cache finché non è finito', async () => {
+  const saved: string[] = [];
+  const shell = { match: async () => undefined, put: async (key: { url?: string } | string) => saved.push(typeof key === 'string' ? key : key.url ?? '') };
+  const respond = loadServiceWorker({ open: async () => shell }, async () => ({ ok: true, clone() { return this; }, body: 'rete' }));
+  await respond('https://musicbank.test/_expo/static/js/web/app-abc.js');
+  await respond('https://musicbank.test/album/1', 'navigate');
+  assert.deepEqual(saved, ['https://musicbank.test/_expo/static/js/web/app-abc.js', '/']);
 });
 
 test('offline il service worker restituisce la copia in cache e non intercetta /rest', async () => {

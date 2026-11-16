@@ -29,13 +29,14 @@ async function cached(key) {
   }
 }
 
-function store(key, response) {
+function store(event, key, response) {
   if (!response.ok) return;
   const copy = response.clone();
-  caches.open(CACHE).then((cache) => cache.put(key, copy)).catch(() => {});
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.put(key, copy)).catch(() => {}));
 }
 
-async function networkFirst(request, fallback) {
+async function networkFirst(event, fallback) {
+  const { request } = event;
   const key = fallback ?? request;
   let response;
   try {
@@ -45,15 +46,16 @@ async function networkFirst(request, fallback) {
     if (hit) return hit;
     throw error;
   }
-  store(key, response);
+  store(event, key, response);
   return response;
 }
 
-async function cacheFirst(request) {
+async function cacheFirst(event) {
+  const { request } = event;
   const hit = await cached(request);
   if (hit) return hit;
   const response = await fetch(request);
-  store(request, response);
+  store(event, request, response);
   return response;
 }
 
@@ -62,11 +64,11 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (!isShellRequest(request, url)) return;
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request, '/'));
+    event.respondWith(networkFirst(event, '/'));
   } else if (url.pathname.startsWith('/_expo/static/')) {
     // I file in /_expo/static hanno l'hash nel nome: una volta scaricati non cambiano.
-    event.respondWith(cacheFirst(request));
+    event.respondWith(cacheFirst(event));
   } else {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirst(event));
   }
 });
