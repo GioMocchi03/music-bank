@@ -87,3 +87,10 @@ export function configureWebEqualizer(
     return false;
   }
 }
+
+// Su iPhone e iPad collegare l'audio a Web Audio può interrompere l'ascolto a schermo bloccato.
+export function isAppleMobileWeb(nav: { userAgent?: string; platform?: string; maxTouchPoints?: number } | undefined =
+  typeof navigator === 'undefined' ? undefined : navigator): boolean {
+  if (!nav?.userAgent) return false;
+  return /iPad|iPhone|iPod/.test(nav.userAgent) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
+}

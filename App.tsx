@@ -59,7 +59,7 @@ import { clearLibrary, loadLibrary, loadLibraryPreview, saveLibrary } from './sr
 import { startupMark } from './src/utils/startupMetrics';
 import { emptyLibraryIndex, prepareLibraryIndex, type LibraryIndex } from './src/utils/libraryIndex';
 import { appendToQueue, insertNextInQueue, moveQueueItem, movedQueueIndex, removeQueueItem, removedQueueIndex, nextQueueIndex, previousQueueIndex, type RepeatMode } from './src/player/queue';
-import { configureWebEqualizer } from './src/player/webEqualizer';
+import { configureWebEqualizer, isAppleMobileWeb } from './src/player/webEqualizer';
 import { forgetPersonalPlaylist, loadPersonalPlaylistIds, rememberPersonalPlaylist } from './src/storage/personalPlaylistStore';
 import {
   OfflineTrack,
@@ -134,6 +134,8 @@ type SearchFilter = 'all' | 'artists' | 'albums' | 'songs';
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 
 const lime = '#D6FF4B';
+const APPLE_MOBILE_WEB = Platform.OS === 'web' && isAppleMobileWeb();
+const WEB_EQUALIZER = Platform.OS === 'web' && !APPLE_MOBILE_WEB;
 const QueueActionsContext = createContext<{ onAdd: (song: Song) => void }>({ onAdd: () => {} });
 const EQUALIZER_STORAGE_KEY = 'music_bank_equalizer_v1';
 
@@ -2876,7 +2878,7 @@ function SettingsScreen({
         {section === 'updates' && <UpdateSettings />}
         {section === 'about' && (
           <View style={styles.settingsActionGroup}>
-            <SettingsActionRow icon="information-outline" title="Music Bank" subtitle={Platform.OS === 'ios' ? `Versione ${APP_VERSION} · build iOS` : `Versione ${APP_VERSION} · build Android ${APP_BUILD}`} value="Condividi" onPress={onShareDiagnostics} />
+            <SettingsActionRow icon="information-outline" title="Music Bank" subtitle={Platform.OS === 'ios' ? `Versione ${APP_VERSION} · build iOS` : Platform.OS === 'web' ? `Versione ${APP_VERSION} · web` : `Versione ${APP_VERSION} · build Android ${APP_BUILD}`} value="Condividi" onPress={onShareDiagnostics} />
             <SettingsActionRow icon="shield-lock-outline" title="Credenziali e privacy" subtitle={Platform.OS === 'web' ? 'Salvataggio locale del browser' : 'Password cifrata nel SecureStore del dispositivo'} value="Provider" onPress={() => onSection('server')} />
             <SettingsActionRow icon="book-open-variant" title="Protocollo OpenSubsonic" subtitle="Documentazione delle API utilizzate" value="Apri" onPress={() => void Linking.openURL('https://opensubsonic.netlify.app/docs/')} />
           </View>
@@ -2996,6 +2998,8 @@ function UpdateSettings() {
         <Text style={styles.settingsRowTitle}>Aggiornamenti pubblici GitHub</Text>
         <Text style={styles.updateHelp}>{Platform.OS === 'ios'
           ? 'Controlla la release ufficiale senza account o token. Su iPhone una nuova versione nativa si reinstalla dal Mac con Sideloadly o AltStore.'
+          : Platform.OS === 'web'
+          ? 'La webapp si aggiorna da sola quando la riapri dopo una nuova pubblicazione sul server.'
           : 'Controlla la release ufficiale senza account o token. L’installazione dell’APK richiede sempre la conferma di Android.'}</Text>
         <Pressable disabled={checking} style={[styles.syncButton, checking && styles.buttonDisabled]} onPress={() => void check()}>
           {checking ? <ActivityIndicator size="small" color="#10130B" /> : <MaterialCommunityIcons name="update" size={21} color="#10130B" />}
@@ -3643,8 +3647,8 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
     if (!settingsReady) return;
     const applied = Platform.OS === 'android'
       ? sessionId > 0 && !!GioConnectionStore && GioConnectionStore.configureEqualizer(sessionId, enabled, levels)
-      : Platform.OS === 'web' && configureWebEqualizer(player, enabled, levels, frequencies);
-    setNotice(applied ? '' : 'Equalizzatore non applicabile alla sessione audio.');
+      : WEB_EQUALIZER && configureWebEqualizer(player, enabled, levels, frequencies);
+    setNotice(applied || APPLE_MOBILE_WEB ? '' : 'Equalizzatore non applicabile alla sessione audio.');
     void AsyncStorage.setItem(EQUALIZER_STORAGE_KEY, JSON.stringify({ enabled, levels }));
   }, [enabled, frequencies, levels, player, sessionId, settingsReady, trackKey]);
 
@@ -3670,7 +3674,7 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
             <Text style={styles.trackSubtitle}>format=raw · maxBitRate=0 · volume digitale 100%</Text>
           </View>
         </View>
-        {Platform.OS === 'android' || Platform.OS === 'web' ? (
+        {Platform.OS === 'android' || WEB_EQUALIZER ? (
           <>
             <View style={styles.eqBands}>
               {frequencies.map((frequency, index) => (
@@ -3682,7 +3686,7 @@ function EqualizerModal({ visible, onClose, sessionId, player, trackKey }: { vis
             </Pressable>
           </>
         ) : (
-          <Text style={styles.eqNotice}>{Platform.OS === 'ios' ? "L'equalizzatore integrato non è ancora disponibile su iOS." : "L'equalizzatore integrato è disponibile nella build Android."}</Text>
+          <Text style={styles.eqNotice}>{Platform.OS === 'ios' || APPLE_MOBILE_WEB ? "L'equalizzatore integrato non è ancora disponibile su iPhone e iPad." : "L'equalizzatore integrato è disponibile nella build Android."}</Text>
         )}
         {!!notice && <Text style={styles.eqNotice}>{notice}</Text>}
       </SafeAreaView>

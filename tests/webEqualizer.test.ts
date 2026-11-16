@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { configureWebEqualizer } from '../src/player/webEqualizer.ts';
+import { configureWebEqualizer, isAppleMobileWeb } from '../src/player/webEqualizer.ts';
 
 class FakeNode {
   frequency = { value: 0 };
@@ -83,4 +83,12 @@ test('una traccia in pausa resta in pausa dopo aver disattivato l’equalizzator
   player.media.loadMetadata();
   await new Promise(setImmediate);
   assert.deepEqual(events, ['replace', 'seek@16.7']);
+});
+
+test('riconosce Safari su iPhone e iPad, anche quando iPadOS si presenta come Mac', () => {
+  assert.equal(isAppleMobileWeb({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5 }), true);
+  assert.equal(isAppleMobileWeb({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 5 }), true);
+  assert.equal(isAppleMobileWeb({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 0 }), false);
+  assert.equal(isAppleMobileWeb({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', platform: 'Win32', maxTouchPoints: 0 }), false);
+  assert.equal(isAppleMobileWeb(undefined), false);
 });
