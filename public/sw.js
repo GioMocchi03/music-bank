@@ -20,25 +20,40 @@ function isShellRequest(request, url) {
   return !url.pathname.startsWith('/rest/') && !url.pathname.startsWith('/share/');
 }
 
-async function networkFirst(request, fallback) {
-  const cache = await caches.open(CACHE);
+// La cache è un aiuto, non un requisito: se è piena o non disponibile, la rete deve funzionare lo stesso.
+async function cached(key) {
   try {
-    const response = await fetch(request);
-    if (response.ok) await cache.put(fallback ?? request, response.clone());
-    return response;
-  } catch (error) {
-    const cached = await cache.match(fallback ?? request);
-    if (cached) return cached;
-    throw error;
+    return await (await caches.open(CACHE)).match(key);
+  } catch {
+    return undefined;
   }
 }
 
+function store(key, response) {
+  if (!response.ok) return;
+  const copy = response.clone();
+  caches.open(CACHE).then((cache) => cache.put(key, copy)).catch(() => {});
+}
+
+async function networkFirst(request, fallback) {
+  const key = fallback ?? request;
+  let response;
+  try {
+    response = await fetch(request);
+  } catch (error) {
+    const hit = await cached(key);
+    if (hit) return hit;
+    throw error;
+  }
+  store(key, response);
+  return response;
+}
+
 async function cacheFirst(request) {
-  const cache = await caches.open(CACHE);
-  const cached = await cache.match(request);
-  if (cached) return cached;
+  const hit = await cached(request);
+  if (hit) return hit;
   const response = await fetch(request);
-  if (response.ok) await cache.put(request, response.clone());
+  store(request, response);
   return response;
 }
 
