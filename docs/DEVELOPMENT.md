@@ -154,7 +154,8 @@ La build automatica non sostituisce una prova su iPhone reale.
 
 ## Altre piattaforme e controlli
 
-Web non supporta download nativi/Android Auto e richiede CORS corretto sul server.
+Web non supporta download nativi/Android Auto e richiede CORS corretto sul server,
+a meno che non sia servito dallo stesso dominio di Navidrome come la [webapp](WEBAPP.md).
 
 - CI push/PR: versioni, TypeScript, test ed export multipiattaforma.
 - Build Android manuale in Actions: release non firmata, senza chiavi private.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Controlla ogni 10 minuti se c'è una nuova webapp Music Bank
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=1min
+
+[Install]
+WantedBy=timers.target

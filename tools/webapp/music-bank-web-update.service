@@ -1,0 +1,17 @@
+[Unit]
+Description=Aggiorna la webapp Music Bank da GitHub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/music-bank-web-update
+User=music-bank-web
+Group=music-bank-web
+UMask=0022
+ProtectSystem=strict
+ReadWritePaths=/srv/music-bank-web
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
