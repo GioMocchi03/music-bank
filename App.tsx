@@ -943,6 +943,18 @@ function MusicBankApp() {
     [activeSourceKey, connected, offlineByKey, playWhenReady, player, preferences.backgroundPlayback, preferences.preferOffline, preferences.defaultPlaybackRate, repeat, autoCommand],
   );
 
+  const playSongs = useCallback(
+    (list: Song[], index?: number) => {
+      if (index === undefined) {
+        void loadSong(list, 0);
+        return;
+      }
+      const song = list[index];
+      if (song) void loadSong([song], 0);
+    },
+    [loadSong],
+  );
+
   useEffect(() => {
     if (!playerStatus.playing || !currentSong || startedSongRef.current === currentSong.id) return;
     if (currentSong.offlineSourceKey && currentSong.offlineSourceKey !== activeSourceKey) return;
@@ -1342,7 +1354,7 @@ function MusicBankApp() {
               columns={columns}
               onAlbum={(album) => setDetail({ type: 'album', id: album.id })}
               onArtist={(artist) => setDetail({ type: 'artist', id: artist.id })}
-              onPlaySongs={(songs, index = 0) => void loadSong(songs, index)}
+              onPlaySongs={playSongs}
               playlistEditable={!!detailPlaylist && isPlaylistOwnedBy(detailPlaylist, authenticatedUsername, personalPlaylistIds)}
               onManagePlaylist={() => setManagePlaylistOpen(true)}
               onMoreSong={(song) => {
@@ -1423,7 +1435,7 @@ function MusicBankApp() {
                   columns={columns}
                   onGenre={(genre) => setDetail({ type: 'genre', genre: genre.value, sources: genre.sourceValues })}
                   onPlayAlbum={playAlbum}
-                  onSong={(items, index) => void loadSong(items, index)}
+                  onSong={playSongs}
                   onMoreSong={(song) => {
                     setActionSong(song);
                     setActionsOpen(true);
@@ -1464,7 +1476,7 @@ function MusicBankApp() {
                     setDetail({ type: 'playlist', id: playlist.id })
                   }
                   onCreatePlaylist={() => setCreatePlaylistOpen(true)}
-                  onSong={(items, index) => void loadSong(items, index)}
+                  onSong={playSongs}
                   onMoreSong={(song) => {
                     setActionSong(song);
                     setActionsOpen(true);
@@ -1483,7 +1495,7 @@ function MusicBankApp() {
                   onAlbum={(album) => setDetail({ type: 'album', id: album.id })}
                   onPlayAlbum={(album) => void playAlbum(album)}
                   onArtist={(artist) => setDetail({ type: 'artist', id: artist.id })}
-                  onSong={(songs, index) => void loadSong(songs, index)}
+                  onSong={playSongs}
                   onMoreSong={(song) => {
                     setActionSong(song);
                     setActionsOpen(true);
@@ -3449,12 +3461,13 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
 function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
   const listRef = useRef<ScrollViewInstance>(null);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
-  const [visualQueue, setVisualQueue] = useState(queue);
+  const baseIndex = Math.min(Math.max(0, currentIndex), queue.length);
+  const [visualQueue, setVisualQueue] = useState(() => queue.slice(baseIndex));
   const dragOriginRef = useRef<number | null>(null);
   const dragVisualIndexRef = useRef<number | null>(null);
   useEffect(() => {
-    if (dragTarget === null) setVisualQueue(queue);
-  }, [queue, dragTarget]);
+    if (dragTarget === null) setVisualQueue(queue.slice(baseIndex));
+  }, [queue, dragTarget, baseIndex]);
   const handleDragTarget = useCallback((from: number, target: number | null) => {
     if (target === null) {
       dragOriginRef.current = null;
@@ -3478,17 +3491,17 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
     }
     if (target <= 1) {
       listRef.current?.scrollTo({ y: Math.max(0, (target - 1) * 58), animated: true });
-    } else if (target >= queue.length - 2) {
+    } else if (target >= visualQueue.length - 2) {
       listRef.current?.scrollToEnd({ animated: true });
     }
     setDragTarget(target);
-  }, [queue.length]);
+  }, [visualQueue.length]);
   const handleReorder = useCallback((from: number, to: number) => {
     dragOriginRef.current = null;
     dragVisualIndexRef.current = null;
     setDragTarget(null);
-    if (from !== to) onReorder(from, to);
-  }, [onReorder]);
+    if (from !== to) onReorder(from + baseIndex, to + baseIndex);
+  }, [onReorder, baseIndex]);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
@@ -3498,7 +3511,7 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
         <View style={styles.queueHeader}>
           <View style={{ flex: 1 }}>
             <Text style={styles.sheetTitle}>Coda di riproduzione</Text>
-            <Text style={styles.sheetSubtitle}>{queue.length} brani</Text>
+            <Text style={styles.sheetSubtitle}>{queue.length - baseIndex} brani</Text>
           </View>
           {!!queue.length && (
             <Pressable accessibilityRole="button" style={styles.queueClearButton} onPress={onClear}>
@@ -3517,13 +3530,13 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
               key={song.id}
               song={song}
               index={index}
-              count={queue.length}
-              current={index === currentIndex}
+              count={visualQueue.length}
+              current={index + baseIndex === currentIndex}
               target={index === dragTarget}
-              onPick={onPick}
+              onPick={(picked) => onPick(picked + baseIndex)}
               onDragTarget={handleDragTarget}
               onReorder={handleReorder}
-              onRemove={onRemove}
+              onRemove={(removed) => onRemove(removed + baseIndex)}
             />
           ))}
         </ScrollView>
