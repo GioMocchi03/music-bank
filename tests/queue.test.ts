@@ -36,8 +36,10 @@ test('lo shuffle esclude il brano corrente', () => {
   assert.deepEqual([...seen].sort(), [0, 2, 3]);
 });
 
-test('con un solo brano lo shuffle resta su quello', () => {
-  assert.equal(nextQueueIndex({ length: 1, index: 0, shuffle: true, repeat: 'none', random: () => 0.9 }), 0);
+test('con un solo brano lo shuffle si ferma, e lo ripete solo con repeat all', () => {
+  assert.equal(nextQueueIndex({ length: 1, index: 0, shuffle: true, repeat: 'none', random: () => 0.9 }), null);
+  assert.equal(nextQueueIndex({ length: 1, index: 0, shuffle: true, repeat: 'one', random: () => 0.9 }), null);
+  assert.equal(nextQueueIndex({ length: 1, index: 0, shuffle: true, repeat: 'all', random: () => 0.9 }), 0);
 });
 
 test('il precedente torna indietro e con repeat all riparte dall’ultimo', () => {
