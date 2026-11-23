@@ -110,7 +110,7 @@ test('track swipe appends without starting playback and survives polling renders
 
 test('queue exposes clear, drag reorder and swipe remove without playing a row', async () => {
   const c = components(); let cleared = 0; let played = 0; const moves: number[][] = []; const removed: number[] = [];
-  const view = await render(c.QueueModal, { visible: true, queue: [song, { ...song, id: 'b', title: 'Track B' }], currentIndex: 0,
+  const view = await render(c.QueueModal, { visible: true, queue: [song, { ...song, id: 'b', title: 'Track B' }], currentIndex: -1, shuffle: false,
     onClear: () => cleared++, onPick: () => played++, onReorder: (from: number, to: number) => moves.push([from, to]), onRemove: (index: number) => removed.push(index) });
   const clear = view.root.findAll((node) => String(node.type) === 'Text' && node.children.includes('Svuota'))[0];
   await act(async () => clear.parent!.props.onPress());
@@ -121,6 +121,34 @@ test('queue exposes clear, drag reorder and swipe remove without playing a row',
   const swipe = view.root.findAll((node) => String(node.type) === 'View' && node.props.onPanResponderRelease && !node.props.accessibilityLabel)[0];
   await act(async () => swipe.props.onPanResponderRelease(null, { dx: 90, dy: 0 }));
   assert.equal(cleared, 1); assert.equal(played, 0); assert.deepEqual(moves, [[0, 1]]); assert.deepEqual(removed, [0]);
+  await act(async () => view.unmount());
+});
+
+test('queue hides played tracks, keeps the current one on top and maps rows to queue indexes', async () => {
+  const c = components(); const picked: number[] = []; const moves: number[][] = []; const removed: number[] = [];
+  const queue = [song, { ...song, id: 'b', title: 'Track B' }, { ...song, id: 'c', title: 'Track C' }, { ...song, id: 'd', title: 'Track D' }];
+  const props = { visible: true, queue, currentIndex: 1, shuffle: false, onClear() {}, onPick: (index: number) => picked.push(index),
+    onReorder: (from: number, to: number) => moves.push([from, to]), onRemove: (index: number) => removed.push(index) };
+  const view = await render(c.QueueModal, props);
+  const handles = () => view.root.findAll((node) => String(node.type) === 'View' && String(node.props.accessibilityLabel ?? '').startsWith('Trascina ')).map((node) => node.props.accessibilityLabel);
+  assert.deepEqual(handles(), ['Trascina Track B', 'Trascina Track C', 'Trascina Track D']);
+  assert.ok(view.root.findAll((node) => String(node.type) === 'Text' && node.children.join('') === '3 brani').length);
+  const drag = async (title: string, dy: number) => {
+    const handle = view.root.findAll((node) => String(node.type) === 'View' && node.props.accessibilityLabel === `Trascina ${title}`)[0];
+    await act(async () => handle.props.onPanResponderGrant());
+    await act(async () => handle.props.onPanResponderMove(null, { dy }));
+    await act(async () => handle.props.onPanResponderRelease());
+  };
+  await drag('Track D', -116);
+  await drag('Track B', 58);
+  await drag('Track D', -58);
+  const rows = view.root.findAll((node) => String(node.type) === 'Pressable' && node.props.onPress && !node.props.accessibilityRole);
+  await act(async () => rows[2].props.onPress());
+  const swipes = view.root.findAll((node) => String(node.type) === 'View' && node.props.onPanResponderRelease && !node.props.accessibilityLabel);
+  await act(async () => swipes[1].props.onPanResponderRelease(null, { dx: 90, dy: 0 }));
+  assert.deepEqual(moves, [[3, 2], [3, 2]]); assert.deepEqual(picked, [3]); assert.deepEqual(removed, [2]);
+  await act(async () => view.update(React.createElement(c.QueueModal, { ...props, shuffle: true })));
+  assert.deepEqual(handles(), ['Trascina Track A', 'Trascina Track B', 'Trascina Track C', 'Trascina Track D']);
   await act(async () => view.unmount());
 });
 
