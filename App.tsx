@@ -1567,6 +1567,7 @@ function MusicBankApp() {
         visible={queueOpen}
         queue={queue}
         currentIndex={queueIndex}
+        shuffle={shuffle}
         onClose={() => setQueueOpen(false)}
         onPick={(index) => void loadSong(queue, index)}
         onClear={clearQueue}
@@ -3458,23 +3459,29 @@ function WaveformSeek({ songId, value, duration, onSeek }: { songId: string; val
   );
 }
 
-function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
+function QueueModal({ visible, queue, currentIndex, shuffle, onClose, onPick, onReorder, onRemove, onClear }: { visible: boolean; queue: Song[]; currentIndex: number; shuffle: boolean; onClose: () => void; onPick: (index: number) => void; onReorder: (from: number, to: number) => void; onRemove: (index: number) => void; onClear: () => void }) {
   const listRef = useRef<ScrollViewInstance>(null);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
-  const baseIndex = Math.min(Math.max(0, currentIndex), queue.length);
+  const baseIndex = shuffle ? 0 : Math.min(Math.max(0, currentIndex), queue.length);
+  const currentPinned = !shuffle && currentIndex >= 0 && currentIndex < queue.length;
+  const allowedTarget = useCallback((from: number, target: number) => {
+    if (!currentPinned) return target;
+    return from === 0 ? 0 : Math.max(1, target);
+  }, [currentPinned]);
   const [visualQueue, setVisualQueue] = useState(() => queue.slice(baseIndex));
   const dragOriginRef = useRef<number | null>(null);
   const dragVisualIndexRef = useRef<number | null>(null);
   useEffect(() => {
     if (dragTarget === null) setVisualQueue(queue.slice(baseIndex));
   }, [queue, dragTarget, baseIndex]);
-  const handleDragTarget = useCallback((from: number, target: number | null) => {
-    if (target === null) {
+  const handleDragTarget = useCallback((from: number, requested: number | null) => {
+    if (requested === null) {
       dragOriginRef.current = null;
       dragVisualIndexRef.current = null;
       setDragTarget(null);
       return;
     }
+    const target = allowedTarget(from, requested);
     if (dragOriginRef.current === null) {
       dragOriginRef.current = from;
       dragVisualIndexRef.current = from;
@@ -3495,13 +3502,14 @@ function QueueModal({ visible, queue, currentIndex, onClose, onPick, onReorder, 
       listRef.current?.scrollToEnd({ animated: true });
     }
     setDragTarget(target);
-  }, [visualQueue.length]);
+  }, [visualQueue.length, allowedTarget]);
   const handleReorder = useCallback((from: number, to: number) => {
     dragOriginRef.current = null;
     dragVisualIndexRef.current = null;
     setDragTarget(null);
-    if (from !== to) onReorder(from + baseIndex, to + baseIndex);
-  }, [onReorder, baseIndex]);
+    const target = allowedTarget(from, to);
+    if (from !== target) onReorder(from + baseIndex, target + baseIndex);
+  }, [onReorder, baseIndex, allowedTarget]);
   if (!visible) return null;
   return (
     <View style={styles.sheetOverlay}>
