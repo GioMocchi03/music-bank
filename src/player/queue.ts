@@ -20,7 +20,7 @@ export function nextQueueIndex({
 }: NextQueuePosition): number | null {
   if (length <= 0) return null;
   if (shuffle) {
-    if (length === 1) return 0;
+    if (length === 1) return repeat === 'all' ? 0 : null;
     const span = length - 1;
     const offset = Math.min(span - 1, Math.floor(random() * span));
     return offset >= index ? offset + 1 : offset;
