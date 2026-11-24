@@ -91,6 +91,27 @@ class MusicBankAutoServicePlaybackTest {
     }
   }
 
+  @Test fun phoneAppQueueOfOneSongIsNotExpandedToItsAlbum() {
+    val context = RuntimeEnvironment.getApplication()
+    File(context.filesDir, "music-bank-auto-catalog.json").writeText(json)
+    val service = Robolectric.buildService(MusicBankAutoService::class.java).create()
+    val controllerInfo = MediaSession.ControllerInfo.createTestOnlyControllerInfo(
+      "com.example.other", 0, 0, 0, 0, false, Bundle.EMPTY, false,
+    )
+    val session = service.get().onGetSession(controllerInfo)!!
+    val controller = MediaController.Builder(context, session.token).buildAsync().await()
+    try {
+      // Same request as MusicBankAutoBridgeModule.setQueue when a song is tapped in the app.
+      controller.setMediaItems(listOf(MediaItem.Builder().setMediaId("song:two").setUri("https://music.test/stream/two").build()), 0, 0L)
+      settle { controller.currentMediaItem?.mediaId == "song:two" }
+      repeat(20) { shadowOf(Looper.getMainLooper()).idle() }
+      assertEquals(1, controller.mediaItemCount)
+    } finally {
+      controller.release()
+      service.destroy()
+    }
+  }
+
   @Test fun logoutForgetsSignedArtworkAndClearsTheCache() {
     val context = RuntimeEnvironment.getApplication()
     val catalogue = File(context.filesDir, "music-bank-auto-catalog.json").apply { writeText(json) }

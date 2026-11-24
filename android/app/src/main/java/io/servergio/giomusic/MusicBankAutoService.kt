@@ -243,7 +243,9 @@ class MusicBankAutoService : MediaLibraryService() {
       startIndex: Int,
       startPositionMs: Long,
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = whenReady { catalogue ->
-      if (mediaItems.size == 1) {
+      // The phone app sends its exact queue with stream URIs; a bare id is a browser tap
+      // (Android Auto) that queues the song's album or playlist.
+      if (mediaItems.size == 1 && mediaItems.first().localConfiguration == null) {
         val requested = mediaItems.first().mediaId
         val context = catalogue.playbackContext(requested)
         if (context.isNotEmpty()) {
