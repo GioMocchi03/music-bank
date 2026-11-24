@@ -3,6 +3,19 @@
 Release pubbliche: [GitHub Releases](https://github.com/GioMocchi03/music-bank/releases).
 Il numero di build Android è distinto dalla versione leggibile.
 
+## 1.3.21 — 2026-11-24 · build 35
+
+### Corretto
+
+- Su Android, toccando un brano dentro un album, una playlist o la ricerca parte
+  solo quel brano. Prima il servizio nativo allargava la richiesta e metteva in
+  coda tutto l'album o la playlist. In Android Auto toccare un brano continua a
+  mettere in coda il suo album o la sua playlist.
+- Comprende le correzioni della coda uscite via OTA sulla 1.3.20: si vedono solo
+  il brano in riproduzione, fisso in cima, e quelli successivi (con lo shuffle
+  attivo tutta la coda). Con lo shuffle e un solo brano la riproduzione si ferma
+  a fine brano, salvo con «ripeti tutto».
+
 ## Aggiornamento OTA su 1.3.20 — 2026-11-12
 
 ### Corretto
